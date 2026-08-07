@@ -1,0 +1,11 @@
+[package]
+name = "maestro-types"
+version = "0.1.0"
+edition = "2021"
+description = "Shared wire types between Maestro desktop (Tauri) and backend-rs"
+license = "Apache-2.0"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }

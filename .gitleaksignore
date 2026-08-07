@@ -1,0 +1,41 @@
+# Reviewed gitleaks findings that are not secrets.
+#
+# Fingerprint format: <file>:<rule>:<line>. Deliberately line-sensitive — if one
+# of these lines moves, the fingerprint stops matching and the finding comes back
+# for re-review rather than staying muted forever.
+#
+# Every entry below was manually inspected. Adding one without reading the actual
+# line defeats the purpose of the scan.
+#
+# Re-generate the current finding set with:
+#   gitleaks dir . --config .gitleaks.toml
+
+# ─── Test fixtures ───────────────────────────────────────────────────────────
+
+# A deliberately-invalid JWT asserting that a forged org_id claim is rejected.
+# Payload is {"sub":"attacker","org_id":"hijacked"} and the signature is the
+# literal string WRONG_SIGNATURE — it is the negative case of a security test.
+backend-rs/tests/security_contract.rs:jwt:482
+
+# OAST oracle test canary — a fixed correlation token the test asserts on. It
+# authenticates nothing. (Value intentionally not repeated here; quoting it made
+# this file itself trip the generic-api-key rule.)
+mcp-server/tests/verification/oracles.test.ts:generic-api-key:379
+
+# ─── Documentation examples ──────────────────────────────────────────────────
+#
+# The report and methodology docs show what real evidence must look like, which
+# means they contain example `Authorization: Bearer <jwt>` requests. These are
+# illustrative payloads, not live credentials.
+#
+# NOTE: a real (now-expired) admin@groovysec.com token WAS committed to
+# CLAUDE.md and skills/assessment/SKILL.md in commit ee938764. Both have since
+# been edited and the current tree is clean — but it remains in git history.
+# See the history-cleanup work before publishing.
+
+docs/kali-mcp-overview.md:generic-api-key:411
+docs/kali-mcp-overview.md:curl-auth-header:417
+skills/chain-analysis/SKILL.md:curl-auth-header:130
+skills/chain-analysis/SKILL.md:curl-auth-header:155
+skills/report/SKILL.md:curl-auth-header:469
+skills/report/SKILL.md:curl-auth-header:472

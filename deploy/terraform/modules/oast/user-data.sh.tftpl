@@ -1,0 +1,120 @@
+#!/bin/bash
+# =============================================================================
+# Interactsh OAST listener bootstrap
+# =============================================================================
+# Rendered by modules/oast/main.tf. Runs once at first boot.
+#
+# NOT YET VALIDATED AGAINST A LIVE DEPLOY. The interactsh-server CLI flags below
+# match the v1.x documented interface, but this has never been applied — confirm
+# `interactsh-server -h` on the pinned version (${interactsh_version}) during the
+# first deploy and correct the unit file if the flags have drifted. That is the
+# single most likely thing to be wrong here.
+# =============================================================================
+set -euxo pipefail
+
+dnf install -y amazon-cloudwatch-agent tar gzip
+
+# --- CloudWatch agent -------------------------------------------------------
+# Retention is owned by the terraform log group, not the agent — deliberately
+# absent here so the two can't disagree.
+cat >/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json <<CWCFG
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/interactsh.log",
+            "log_group_name": "${log_group}",
+            "log_stream_name": "{instance_id}/interactsh"
+          }
+        ]
+      }
+    }
+  }
+}
+CWCFG
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+
+# --- Amazon Linux runs systemd-resolved on :53; interactsh needs that port ---
+systemctl disable --now systemd-resolved 2>/dev/null || true
+rm -f /etc/resolv.conf
+cat >/etc/resolv.conf <<'RESOLV'
+nameserver 169.254.169.253
+RESOLV
+chattr +i /etc/resolv.conf 2>/dev/null || true
+
+# --- Install the pinned interactsh-server -----------------------------------
+cd /tmp
+curl -fsSL -o interactsh.tar.gz \
+  "https://github.com/projectdiscovery/interactsh/releases/download/v${interactsh_version}/interactsh-server_${interactsh_version}_linux_amd64.zip" \
+  || curl -fsSL -o interactsh.tar.gz \
+  "https://github.com/projectdiscovery/interactsh/releases/download/v${interactsh_version}/interactsh-server_${interactsh_version}_linux_amd64.tar.gz"
+if file interactsh.tar.gz | grep -qi zip; then
+  dnf install -y unzip && unzip -o interactsh.tar.gz -d /usr/local/bin/
+else
+  tar -xzf interactsh.tar.gz -C /usr/local/bin/ interactsh-server
+fi
+chmod +x /usr/local/bin/interactsh-server
+
+# --- Fetch the polling token ------------------------------------------------
+# Created empty by terraform. Until it holds a value the listener runs WITHOUT
+# auth, which would let anyone poll interactions — so refuse to start instead.
+TOKEN="$(aws secretsmanager get-secret-value \
+  --region '${aws_region}' --secret-id '${token_secret_id}' \
+  --query SecretString --output text 2>/dev/null || true)"
+
+install -d -m 0700 /etc/interactsh
+if [ -z "$TOKEN" ] || [ "$TOKEN" = "None" ]; then
+  echo "OAST token secret is empty — refusing to start an unauthenticated listener." \
+    | tee /var/log/interactsh.log
+  exit 0
+fi
+printf '%s' "$TOKEN" >/etc/interactsh/token
+chmod 0600 /etc/interactsh/token
+
+# --- systemd unit -----------------------------------------------------------
+# -domain / -ip: what this server is authoritative for and answers with.
+# -auth + -token: gate the polling API.
+# -acme: obtain a wildcard cert for *.${oast_domain} via ACME. Interactsh can
+#        self-answer the dns-01 challenge because it IS the authoritative
+#        nameserver for that name — no Route 53 credentials on this host.
+# The cert + ACME account persist on the root EBS volume, so a reboot does not
+# re-issue and does not burn Let's Encrypt duplicate-cert rate limit.
+cat >/etc/systemd/system/interactsh.service <<UNIT
+[Unit]
+Description=Interactsh OAST server (${oast_domain})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/interactsh-server \
+  -domain ${oast_domain} \
+  -ip ${public_ip} \
+  -listen-ip 0.0.0.0 \
+  -auth \
+  -token-file /etc/interactsh/token \
+  -acme \
+  -acme-email ${acme_contact_email} \
+%{ if enable_smtp ~}
+  -smtp \
+%{ endif ~}
+  -root-tld
+Restart=always
+RestartSec=5
+StandardOutput=append:/var/log/interactsh.log
+StandardError=append:/var/log/interactsh.log
+# Bind :53 without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/log /root/.config /etc/interactsh
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable --now interactsh.service

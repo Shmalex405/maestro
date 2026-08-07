@@ -1,0 +1,22 @@
+-- =============================================================================
+-- Project-level scope — each project carries its own scope. 2026-06-10
+-- =============================================================================
+--
+-- A project gains a `scope` JSONB column so it can own the network/domain/repo/
+-- cloud/identity targets (and exclusions) the assessment runs against. The
+-- backend treats it as opaque — the frontend owns the shape:
+--
+--   {
+--     "networks":            [{ "cidr": "...", "environment": "...", "notes": "" }],
+--     "domains":             [{ "pattern": "...", "environment": "...", "notes": "" }],
+--     "repos":               ["/path/or/git-url"],
+--     "cloud_account_ids":   ["<id of an org cloud account>"],
+--     "identity_target_ids": ["<id of an org identity target>"],
+--     "exclusions":          [{ "pattern": "...", "reason": "..." }]
+--   }
+--
+-- Stored as opaque JSONB (serde_json::Value on the Rust side); the backend does
+-- not validate sub-shapes. Defaults to `{}` for existing rows.
+-- =============================================================================
+
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS scope JSONB NOT NULL DEFAULT '{}'::jsonb;

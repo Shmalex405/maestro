@@ -1,0 +1,390 @@
+# Scope Configuration — TEMPLATE
+#
+# This file is the OFFLINE FALLBACK only. In production, the Maestro desktop
+# app stores scope per-org in the cloud backend; the in-container MCP server
+# fetches it via the cloud-session bridge. You don't need to edit this YAML
+# for normal use — open the desktop app's Scope page instead.
+#
+# When this YAML IS read:
+#   1. CI / unattended runs without a desktop session
+#   2. Local dev when no scope has been saved to the cloud yet
+#
+# Personal overrides go in `config/scope.local.yml` (gitignored, picked up
+# automatically by the loader). Never put real customer domains in this
+# committed file — it's a public template.
+
+# Apps group related domains/networks into logical applications.
+# Add your own under `config/scope.local.yml` rather than here.
+apps: []
+
+# Legacy flat lists kept for backwards compatibility with the MCP scope
+# validator. Anything that should be testable goes under one of these.
+
+networks:
+  - cidr: "10.0.0.0/8"
+    environment: "internal-dev"
+    notes: "Internal RFC1918 example — replace with your authorized ranges"
+
+  - cidr: "192.168.100.0/24"
+    environment: "staging"
+    notes: "Staging example"
+
+domains:
+  - pattern: "*.dev.example.com"
+    environment: "development"
+
+  - pattern: "*.staging.example.com"
+    environment: "staging"
+
+  - pattern: "api-test.example.com"
+    environment: "test"
+
+# =============================================================================
+# CLOUD ACCOUNTS — Authorized cloud infrastructure for red team testing
+# =============================================================================
+# Each entry authorizes testing of a specific cloud account/subscription/project.
+# Cloud tools validate against these entries before executing.
+# Auth is resolved at runtime: role assumption, profile, or env vars.
+
+cloud_accounts:
+  # Example AWS account (uncomment and configure for your environment)
+  # - id: "aws-staging"
+  #   provider: aws
+  #   account_id: "123456789012"
+  #   regions:
+  #     - "us-east-1"
+  #     - "us-west-2"
+  #   auth_method: "role"           # role | access_key | profile
+  #   role_arn: "arn:aws:iam::123456789012:role/MaestroPentestRole"
+  #   services_in_scope:
+  #     - "ec2"
+  #     - "s3"
+  #     - "lambda"
+  #     - "rds"
+  #     - "ecs"
+  #     - "eks"
+  #     - "iam"
+  #     - "secretsmanager"
+  #     - "sqs"
+  #     - "sns"
+  #   exclusions:
+  #     - "arn:aws:s3:::production-*"
+  #     - "arn:aws:ec2:*:*:instance/i-prod*"
+  #     - "arn:aws:lambda:*:*:function:prod-*"
+  #   notes: "Staging AWS account — authorized for full red team"
+
+  # Example Azure subscription
+  # - id: "azure-dev"
+  #   provider: azure
+  #   subscription_id: "${AZURE_SUBSCRIPTION_ID}"
+  #   tenant_id: "${AZURE_TENANT_ID}"
+  #   auth_method: "service_principal"  # service_principal | managed_identity | cli
+  #   client_id: "${AZURE_CLIENT_ID}"
+  #   client_secret: "${AZURE_CLIENT_SECRET}"
+  #   resource_groups_in_scope:
+  #     - "staging-rg"
+  #     - "dev-rg"
+  #   exclusions:
+  #     - resource_group: "production-rg"
+  #   notes: "Azure dev subscription"
+
+  # Example GCP project
+  # - id: "gcp-staging"
+  #   provider: gcp
+  #   project_id: "my-project-staging"
+  #   auth_method: "service_account"  # service_account | adc
+  #   service_account_key: "${GCP_SA_KEY_PATH}"
+  #   regions:
+  #     - "us-central1"
+  #     - "us-east1"
+  #   services_in_scope:
+  #     - "compute"
+  #     - "storage"
+  #     - "functions"
+  #     - "gke"
+  #     - "iam"
+  #     - "secretmanager"
+  #   exclusions:
+  #     - "projects/my-project-staging/zones/*/instances/prod-*"
+  #   notes: "GCP staging project"
+
+# =============================================================================
+# IDENTITY TARGETS — Authorized identity directories for red team testing
+# =============================================================================
+# Each entry authorizes testing of a specific identity surface: an on-prem
+# Active Directory domain, a Microsoft Entra ID (Azure AD) tenant, or a
+# Microsoft 365 / O365 org. Identity tools validate against these entries
+# before executing (mirror of how cloud tools validate against cloud_accounts).
+# The identity agents (identity-recon, identity-exploit, identity-analysis) and
+# the 40 IDENTITY-XX tests run ONLY when this section has entries — exactly as
+# the cloud agents/tests gate on cloud_accounts.
+#
+# Sub-kinds (the `kind:` field) decide which fields are required:
+#   - active_directory : domain + domain_controllers (DC IPs must ALSO fall
+#                        within the `networks` CIDRs above) + netbios
+#   - entra_id         : tenant_id + tenant_domain (API-driven, no network
+#                        position required)
+#   - m365             : entra_tenant_ref (M365 rides the Entra tenant token)
+#
+# LOCKOUT MANDATE (mirrors §15 of docs/identity-redteam-plan.md): every entry
+# that any spray tool can target MUST declare lockout_threshold +
+# lockout_window_minutes. If absent, every spray tool is BLOCKED (no guessing a
+# safe default). Sprays stay >= global_lockout_safety_margin attempts below the
+# threshold, do 1 attempt/user/window with jitter, and abort on the first
+# observed lockout.
+#
+# Credentials are brokered at runtime (never stored here) — `*_ref` fields point
+# at entries in credentials.yml `identity_credentials`.
+
+identity_targets: []
+  # --- Example on-prem Active Directory domain ---
+  # - id: "ad-corp"
+  #   kind: active_directory
+  #   domain: "corp.example.com"
+  #   domain_controllers:
+  #     - "10.10.10.10"             # MUST also fall within a `networks` CIDR above
+  #   netbios: "CORP"
+  #   auth_method: "domain_creds"   # domain_creds | none | foothold_session
+  #   username_ref: "ad-corp-user"  # references credentials.yml identity_credentials[].name
+  #   lockout_threshold: 5          # MANDATORY — sets the spray rate (see Lockout Mandate)
+  #   lockout_window_minutes: 30
+  #   exclusions:
+  #     - "krbtgt"                  # never touch
+  #     - "svc-backup-prod"
+  #   notes: "Staging AD forest — authorized for full red team"
+
+  # --- Example Microsoft Entra ID tenant ---
+  # - id: "entra-corp"
+  #   kind: entra_id
+  #   tenant_id: "${ENTRA_TENANT_ID}"
+  #   tenant_domain: "corpexample.onmicrosoft.com"
+  #   auth_method: "service_principal"  # service_principal | device_code | none
+  #   client_id_ref: "entra-corp-sp"    # references identity_credentials
+  #   lockout_threshold: 10             # Entra Smart Lockout default
+  #   lockout_window_minutes: 60
+  #   spray_users_max_per_window: 1     # one attempt/user/window (Lockout Mandate)
+  #   exclusions:
+  #     - "breakglass@corpexample.onmicrosoft.com"
+  #     - "admin@corpexample.onmicrosoft.com"
+  #   notes: "Entra dev tenant"
+
+  # --- Example Microsoft 365 / O365 org (shares the Entra tenant token) ---
+  # - id: "m365-corp"
+  #   kind: m365
+  #   entra_tenant_ref: "entra-corp"    # M365 rides the Entra token
+  #   services_in_scope: ["exchange", "sharepoint", "teams", "onedrive"]
+  #   exclusions:
+  #     - mailbox: "ceo@corpexample.com"
+  #     - site: "/sites/Legal"
+  #   notes: "M365 dev org"
+
+  # --- Example Okta org ---
+  # Set `provider: okta` and use `tenant_id` = the Okta org URL (the identity
+  # tools key scope on tenant_id). The provider field tells the agents which
+  # adapter to use; the same Lockout Mandate applies to spray_okta.
+  # - id: "okta-corp"
+  #   kind: okta
+  #   provider: okta
+  #   tenant_id: "https://corp.okta.com"
+  #   auth_method: "api_token"          # api_token (SSWS) | none
+  #   token_ref: "okta-corp-api"        # references identity_credentials
+  #   lockout_threshold: 10
+  #   lockout_window_minutes: 60
+  #   exclusions:
+  #     - "breakglass@corp.com"
+  #   notes: "Okta dev org"
+
+  # --- Example Google Workspace ---
+  # - id: "gws-corp"
+  #   kind: google_workspace
+  #   provider: google_workspace
+  #   tenant_id: "corp.com"             # primary domain (or customer id)
+  #   auth_method: "service_account"    # service_account (domain-wide delegation) | none
+  #   sa_key_ref: "gws-corp-sa"         # references identity_credentials (SA JSON)
+  #   delegated_subject: "admin@corp.com"
+  #   exclusions:
+  #     - "ceo@corp.com"
+  #   notes: "Google Workspace dev tenant"
+
+  # --- Example Ping (PingOne / PingFederate) ---
+  # - id: "ping-corp"
+  #   kind: ping
+  #   provider: ping
+  #   tenant_id: "${PINGONE_ENV_ID}"    # PingOne environment id (or org domain)
+  #   ping_region: "NA"                 # NA | EU | AP | CA
+  #   auth_method: "worker_token"       # worker_token | none
+  #   token_ref: "ping-corp-worker"
+  #   notes: "PingOne dev environment"
+
+# =============================================================================
+# AI / LLM TARGETS — Authorized AI systems for red team testing
+# =============================================================================
+# Each entry authorizes red-teaming of a specific customer-owned AI system: a raw
+# model API, a chatbot wrapping a model, a tool-using agent, a RAG app, or an MCP
+# server. The AI tools validate against these entries before executing — exactly
+# as identity tools gate on identity_targets and cloud tools on cloud_accounts.
+# The AI agents (ai-recon, ai-redteam, ai-analysis) and the AI-XX tests run ONLY
+# when this section has entries. Fail-closed: no entry, no AI testing.
+#
+# Sub-kinds (the `kind:` field) decide which test families apply:
+#   - model_api  : raw completion/chat endpoint (jailbreak, system-prompt leak,
+#                  unbounded consumption)
+#   - chat_app   : app wrapping a model (+ improper output handling, info disclosure)
+#   - agent      : LLM with tools/function-calling (+ excessive agency, tool coercion)
+#   - rag_app    : retrieval-augmented app (+ indirect injection, tenant isolation)
+#   - mcp_server : an MCP server itself (+ tool-description poisoning, confused-deputy)
+#
+# CROSS-KIND AUTO-DETECT (AI-RECON-05): `kind` is just the customer's CLAIM. ai-recon
+# actively probes the target's TRUE nature — a declared chat_app that will actually
+# tool-call, retrieve documents, or answer MCP tools/list is treated as ALSO having
+# that capability, and the tests for it run against the target (coverage only expands,
+# never shrinks). An undeclared-but-detected capability is itself a finding (the app
+# exposes more surface than declared). Default ON; set `cross_kind_probe: false` on a
+# target to honor the declared kind only.
+#
+# SCOPE INVARIANT (mirrors the AD domain-controller-IP rule): an entry's
+# `endpoint` is an HTTP URL and MUST ALSO resolve into an in-scope `domains` /
+# `networks` entry above. The AI scope validator enforces this — it runs the
+# endpoint host through the same validateScope() used for web targets, so the AI
+# tools can never become a path around the URL scope validator.
+#
+# AI SAFETY MANDATE (the Lockout-Mandate analog — see docs/ai-surface-plan.md §10):
+# consumption is probe-only (no sustained floods), never persist attacker content
+# into a vector store / memory / fine-tune loop, prove excessive agency by
+# CAPTURING the dangerous tool call (not executing real side effects), and only
+# ever the customer's own systems — never the upstream model provider.
+#
+# REQUEST SHAPE (required): every target MUST declare `request_template` — the
+# endpoint's JSON request body with a `{{PROMPT}}` placeholder where the user
+# message goes. There is NO default shape (an OpenAI-style guess silently fails on
+# other endpoints). Optionally set `response_path` (where the reply text lives in
+# the response, e.g. `choices.0.message.content`). The config UI offers OpenAI /
+# Anthropic / custom presets. Full how-to + examples:
+# docs/user-guide/ai-targets/request-shapes.md.
+#
+# Credentials are brokered at runtime (never stored here) — `*_ref` fields point
+# at entries in credentials.yml (reuses the identity_credentials map).
+
+ai_targets: []
+  # --- Example chatbot wrapping a model (v1 primary kind) ---
+  # - id: "support-bot"
+  #   kind: chat_app
+  #   provider: "custom"               # custom | openai | anthropic | azure_openai | bedrock | vertex
+  #   endpoint: "https://app.staging.example.com/api/chat"   # MUST resolve into domains/networks above
+  #   model: "gpt-4o"                  # the model the customer claims is behind it
+  #   # REQUIRED — the endpoint's request body shape, {{PROMPT}} = the user message:
+  #   request_template: '{"model":"gpt-4o","messages":[{"role":"user","content":"{{PROMPT}}"}]}'
+  #   response_path: "choices.0.message.content"   # where the reply text lives (optional)
+  #   auth_method: "bearer"            # bearer | api_key | session | none
+  #   credential_ref: "support-bot-key"   # references credentials.yml (ai/identity_credentials)
+  #   system_prompt_known: ""          # the declared system prompt, if the customer shares it
+  #   declared_guardrails: ["input filter", "output PII redaction"]
+  #   trials: 10                       # N-trials default for nondeterministic tests (see §8)
+  #   cross_kind_probe: true           # default — probe for agent/rag/mcp behavior beyond the declared kind (AI-RECON-05)
+  #   exclusions: []
+  #   notes: "Staging support chatbot — authorized for full AI red team"
+
+  # --- Example tool-using agent (highest value; excessive-agency testing) ---
+  # - id: "ops-agent"
+  #   kind: agent
+  #   provider: "custom"
+  #   endpoint: "https://agent.staging.example.com/v1/run"   # MUST be in domains/networks
+  #   model: "claude-sonnet-4-6"
+  #   auth_method: "api_key"
+  #   credential_ref: "ops-agent-key"
+  #   declared_tools:                  # the exposed tool set — sets the excessive-agency blast radius
+  #     - "search_kb"
+  #     - "send_email"
+  #     - "create_ticket"
+  #   trials: 10
+  #   exclusions: []
+  #   notes: "Internal ops agent — capability-not-execution only (AI Safety Mandate)"
+
+  # --- Example raw model API ---
+  # - id: "model-gw"
+  #   kind: model_api
+  #   provider: "azure_openai"
+  #   endpoint: "https://model-gw.staging.example.com/v1/chat/completions"
+  #   model: "gpt-4o"
+  #   auth_method: "api_key"
+  #   credential_ref: "model-gw-key"
+  #   trials: 10
+  #   notes: "Raw model gateway"
+
+  # --- Example RAG app (v2 — indirect injection via sources, tenant isolation) ---
+  # - id: "docs-rag"
+  #   kind: rag_app
+  #   provider: "custom"
+  #   endpoint: "https://docs.staging.example.com/api/ask"
+  #   model: "gpt-4o-mini"
+  #   auth_method: "session"
+  #   credential_ref: "docs-rag-session"
+  #   trials: 10
+  #   notes: "RAG over customer docs — v2 scope"
+
+# =============================================================================
+# KUBERNETES CLUSTERS — Authorized clusters for red team testing
+# =============================================================================
+kubernetes:
+  - id: "dev-cluster"
+    cluster: "dev-cluster"
+    provider: ""                     # aws | azure | gcp | on-prem (links to cloud_accounts)
+    auth_method: "kubeconfig"        # kubeconfig | token | exec
+    # kubeconfig_path: "${KUBECONFIG}"
+    # api_server: "https://k8s.staging.example.com:6443"
+    # token: "${K8S_TOKEN}"
+    namespaces_in_scope:
+      - "app"
+      - "api"
+      - "backend"
+    namespaces_excluded:
+      - "kube-system"
+      - "kube-public"
+    notes: "Development cluster — example only"
+
+exclusions:
+  # Never test these (examples — replace with your own out-of-scope rules)
+  - "10.0.0.1"          # Production gateway
+  - "*.prod.example.com"
+  - "192.168.100.1"     # Network equipment
+  # NOTE: identity-specific exclusions (krbtgt, breakglass accounts, protected
+  # mailboxes/sites) are declared per-target in the `exclusions:` of each
+  # identity_targets[] entry above, not in this flat list. The cross-cutting
+  # exclusion guard (scope/exclusion-guard.ts) hard-blocks any tool call that
+  # would touch an excluded principal, mailbox, site, or ARN — krbtgt / breakglass
+  # are never touched regardless of which dimension or arg name carries them.
+
+# =============================================================================
+# POST-EXPLOITATION SCOPE (assumed-breach) — gates the post-exploit-operator
+# =============================================================================
+# EMPTY {} ⇒ OFF: the post-exploitation phase is skipped and lateral movement is
+# limited to targets already listed above. To enable, set `mode: assumed_breach`
+# and an `authorization_boundary`. Then the operator may follow access to
+# RUNTIME-DISCOVERED targets (internal hosts via SSRF, hosts reachable from a
+# foothold, cloud resources via an assumed role) IN ADDITION TO the scope above —
+# scope STEERS the operator, it does not fence it. See
+# docs/RFC-POST-EXPLOITATION-LAYER.md §7.1.
+#
+# The two hard rules:
+#   authorization_boundary — the OUTER edge of what's owned/authorized (draw it
+#     broad: the whole owned environment). A pivot target MUST fall inside it; a
+#     target of uncertain ownership is treated as OUTSIDE it (fail closed).
+#   never_touch — the ONE absolute deny. Never acted on even when reachable
+#     (shared-tenant / third-party / break-glass). Enforced by the exclusion fence.
+#   direction — STEERS which frontier move the operator picks; it never blocks.
+#
+# Example (uncomment + edit to enable):
+# post_exploitation:
+#   mode: assumed_breach
+#   authorization_boundary:
+#     - "*.example.com"             # owned domain tree
+#     - aws_account: "123456789012"
+#     - 10.0.0.0/8                  # owned internal range
+#   never_touch:
+#     - shared_tenant_resources
+#     - third_party_apis
+#     - 10.0.0.53/32                # a specific never-touch host
+#   direction:
+#     prioritize: [crown_jewel_data, domain_admin, cloud_org_admin]
+#     deprioritize: [low_value_noisy_targets]
+post_exploitation: {}

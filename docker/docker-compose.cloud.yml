@@ -1,0 +1,26 @@
+version: '3.8'
+services:
+  kali:
+    build:
+      context: .
+      dockerfile: Dockerfile.kali
+    container_name: kali-pentest
+    hostname: kali-pentest
+    ports:
+      - "3001:3001"
+    volumes:
+      - kali-data:/opt/pentest/output
+      - kali-msf-data:/root/.msf4
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      - AUTONOMOUS_PORT=3001
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000}
+    restart: unless-stopped
+
+volumes:
+  kali-data:
+  kali-msf-data:

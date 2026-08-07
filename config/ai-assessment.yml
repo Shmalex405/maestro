@@ -1,0 +1,314 @@
+# AI / LLM Security Assessment Configuration
+# ===========================================
+# AUTHORITATIVE source for the STANDALONE AI assessment orchestration. This is the
+# AI analog of config/team-assessment.yml — a separate directive that reuses the
+# shared assessment plumbing (MCP server, scope validator, findings DB, PDF
+# rendering) but drives only the AI agent triad plus the shared report tail.
+#
+# Entry point: /assess-ai (.claude/commands/assess-ai.md). A standard team
+# assessment never includes these agents; /assess-ai never includes the
+# web/cloud/identity teams. One config/test-matrix.yml still backs both (single
+# source for the provenance gate); THIS file decides which tests run.
+#
+# See docs/ai-surface-plan.md (the charter) and skills/ai-assessment/SKILL.md
+# (the protocol). Maps to OWASP Top 10 for LLM Applications (2025) + MITRE ATLAS.
+#
+# Each agent declares:
+#   - checkpoint_file: the file it MUST write before completion (lead's blocked_by
+#     gate + pre-report manifest check)
+#   - tests / count: the AI test IDs it owns (the in-scope denominator is still
+#     scope-derived at runtime from test-matrix applies_when — see verification:)
+#
+# NON-DETERMINISM: AI tests run N trials (test-matrix `trials:`) and record a
+# success-rate in evidence; status stays binary (PASS/FAIL/N_A/BLOCKED). See §8 of
+# the charter and the SKILL.
+
+# Execution phases (determines ordering and parallelism)
+phases:
+  - phase: 1
+    name: "Authentication + AI Scope Confirm"
+    agents: ["team-lead"]
+    parallel: false
+    description: "Interactive auth (per ai_targets credential_ref), scope confirm, and ai_targets validation (endpoint ∈ domains/networks)"
+
+  - phase: 2
+    name: "AI Recon"
+    agents: ["ai-recon"]
+    parallel: false
+    description: "Model/provider/framework fingerprint, exposed-tool enumeration, untrusted-input surface map, guardrail detection — the input to everything downstream"
+
+  - phase: 3
+    name: "AI Red Team"
+    agents: ["ai-redteam"]
+    parallel: false
+    blocked_by: ["ai-recon"]
+    description: "Direct + indirect prompt injection, jailbreak, system-prompt extraction, sensitive disclosure, improper output handling (owns the downstream sink end-to-end), excessive-agency (capability-not-execution), consumption probe"
+
+  - phase: 3.5
+    name: "Chain Hypothesize (AI)"
+    agents: ["chain-analysis"]
+    parallel: false
+    blocked_by: ["ai-redteam"]
+    description: "Render AI injection→sink→impact chains from ai-redteam findings (the injection→sink path catalogued as a chain)"
+
+  - phase: 4
+    name: "AI Analysis"
+    agents: ["ai-analysis"]
+    parallel: false
+    blocked_by: ["ai-redteam", "chain-analysis"]
+    description: "Synthesize the AI Security Assessment Report: OWASP LLM Top 10 + MITRE ATLAS mapping, the injection-surface map, and the excessive-agency graph (this injection reaches this tool reaches this system), EXPLOITED vs DETECTED-ONLY — analysis only, never re-attacks"
+
+  - phase: 4.75
+    name: "Severity Calibration"
+    agents: ["severity-calibrator"]
+    parallel: false
+    blocked_by: ["ai-redteam", "chain-analysis"]
+    description: "Re-rate finding severity by actual exploitation outcome + the AI success-rate rule (success-rate below the per-severity threshold → downgrade)"
+
+  - phase: 5a
+    name: "Compliance Mapping"
+    agents: ["compliance"]
+    parallel: false
+    blocked_by: ["ai-redteam", "chain-analysis", "severity-calibrator"]
+    description: "Map findings to OWASP LLM Top 10 (2025) + MITRE ATLAS + CWE/CVSS"
+
+  - phase: 5b
+    name: "Report Writing"
+    agents: ["report-writer"]
+    parallel: false
+    blocked_by: ["compliance", "ai-analysis"]
+    description: "Generate the full markdown AI Security Assessment Report (the primary deliverable)"
+
+  - phase: 5b.5
+    name: "Report Enrichment"
+    agents: ["report-enrichment"]
+    parallel: false
+    blocked_by: ["report-writer"]
+    description: "Validate report against quality standards, fix gaps, re-fetch missing evidence"
+
+  - phase: 5c
+    name: "PDF Rendering"
+    agents: ["pdf-renderer"]
+    parallel: false
+    blocked_by: ["report-enrichment"]
+    description: "Render the AI Security Assessment Report to PDF and register it in the cloud Reports page"
+
+# Agent-to-test mapping
+agents:
+
+  team-lead:
+    description: "Team lead handles interactive authentication + ai_targets scope validation"
+    subagent_type: null  # Team lead is the main conversation, not a spawned agent
+    tests: []  # No test IDs — auth + scope confirm only
+    count: 0
+    checkpoint_file: "reports/{TARGET_SLUG}-ai-checkpoint.yml"
+    outputs:
+      - ai_targets        # Validated in-scope AI targets (id, kind, endpoint, model)
+      - auth_headers      # Resolved per-target auth (bearer/api_key), real values
+      - declared_tools    # For agent targets — the exposed tool set
+      - declared_guardrails
+
+  ai-recon:
+    description: "AI reconnaissance — model/provider/framework fingerprint, exposed-tool enumeration, untrusted-input surface map, guardrail detection (the deterministic, continuous tier)"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # mechanical agent → Sonnet (runtime source is .claude/agents/ai-recon.md frontmatter)
+    tests:
+      - AI-RECON-01  # Model / provider / framework fingerprint
+      - AI-RECON-02  # Exposed tool / function enumeration (agent/mcp_server)
+      - AI-RECON-03  # Untrusted-input surface map
+      - AI-RECON-04  # Guardrail detection
+      - AI-RECON-05  # Cross-kind capability auto-detection (declared ∪ detected → expands the test set)
+    count: 5
+    applies_when: "ai_targets defined in scope.yml"
+    checkpoint_file: "reports/ai-recon-results.json"
+    inputs:
+      - ai_targets
+      - auth_headers
+    outputs:
+      - input_surface_map      # Every place attacker-controlled data enters the context window
+      - model_fingerprint      # Model, provider, framework
+      - exposed_tools          # For agent/mcp_server targets
+      - guardrails             # Declared + observed filters
+      - detected_capabilities  # AI-RECON-05: kinds the target actually behaves like (declared ∪ detected) — expands the test set
+      - ai_findings            # Includes undeclared-capability findings (source: ai_capability_detection)
+
+  ai-redteam:
+    description: "AI exploitation — prompt injection (direct + indirect), jailbreak, system-prompt extraction, sensitive disclosure, improper output handling (owns the downstream sink), excessive-agency (capability-not-execution), consumption probe"
+    subagent_type: "general-purpose"
+    tests:
+      - AI-PI-01   # Direct prompt injection
+      - AI-PI-02   # Indirect prompt injection (agent/rag_app/mcp_server)
+      - AI-PI-03   # Jailbreak battery
+      - AI-GB-01   # Guardrail bypass
+      - AI-SPL-01  # System-prompt extraction
+      - AI-SPL-02  # Tool-schema / function-definition leakage (agent/mcp_server)
+      - AI-SID-01  # Sensitive information disclosure
+      - AI-SID-02  # PII leakage in output
+      - AI-MIS-01  # Misinformation / overreliance probe
+      - AI-OH-01   # Improper output handling → downstream sink
+      - AI-OH-02   # Markdown / link injection in output
+      - AI-EA-01   # Excessive agency / tool-call coercion
+      - AI-EA-02   # Multi-tool chain escalation (agent)
+      - AI-DOS-01  # Unbounded consumption probe (probe-only)
+      - AI-RAG-01  # RAG tenant-isolation / retrieval leak (rag_app)
+      - AI-POI-01  # Retrieval / data-poisoning influence — non-persistent (rag_app)
+      - AI-MCP-01  # MCP tool-description poisoning (mcp_server)
+      - AI-MCP-02  # MCP confused-deputy (mcp_server)
+    count: 18
+    applies_when: "ai_targets defined in scope.yml"
+    checkpoint_file: "reports/ai-redteam-results.json"
+    inputs:
+      - ai_targets
+      - auth_headers
+      - input_surface_map      # From ai-recon
+      - model_fingerprint      # From ai-recon
+      - exposed_tools          # From ai-recon
+      - guardrails             # From ai-recon
+      - detected_capabilities  # From ai-recon (AI-RECON-05) — run the tests for every detected capability, not just the declared kind
+    outputs:
+      - ai_exploit_findings
+      - injection_successes   # Per-test success-rate (k/N trials)
+      - captured_tool_calls   # Excessive-agency evidence (captured, not executed)
+
+  chain-analysis:
+    description: "Attack chain analysis: render AI injection→sink→impact chains from ai-redteam findings"
+    subagent_type: "general-purpose"
+    tests: []  # No test IDs — AI chain synthesis only (does not run the generic CHAIN-01..08 set)
+    count: 0
+    checkpoint_file: "reports/chain-analysis-results.json"
+    inputs:
+      - ai_exploit_findings   # From ai-redteam
+      - input_surface_map     # From ai-recon
+      - captured_tool_calls   # From ai-redteam
+    outputs:
+      - chain_hypotheses
+      - chain_finding_ids
+
+  ai-analysis:
+    description: "AI analysis: synthesize the AI Security Assessment Report (OWASP LLM Top 10 + MITRE ATLAS, injection-surface map, excessive-agency graph) — analysis only, never re-attacks"
+    subagent_type: "general-purpose"
+    tests: []  # No test IDs — AI Security Assessment Report synthesis only
+    count: 0
+    applies_when: "ai_targets defined in scope.yml"
+    checkpoint_file: "reports/ai-analysis-results.json"
+    inputs:
+      - ai_finding_ids        # All AI findings from ai-recon + ai-redteam
+      - input_surface_map     # From ai-recon
+      - model_fingerprint     # From ai-recon
+      - exposed_tools         # From ai-recon
+      - ai_exploit_findings   # From ai-redteam
+      - injection_successes   # From ai-redteam (drives the success-rate columns)
+      - captured_tool_calls   # From ai-redteam (drives the excessive-agency graph)
+      - chain_results         # From chain-analysis (AI injection→sink chains)
+      - severity_calibration  # From severity-calibrator (optional — dual severity)
+    outputs:
+      - ai_report_path        # Path to the AI Security Assessment Report markdown
+
+  severity-calibrator:
+    description: "Re-rate finding severity by actual exploitation outcome + the AI success-rate rule"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6
+    tests: []  # No test IDs — calibration only
+    count: 0
+    checkpoint_file: "reports/severity-calibration-results.json"
+    inputs:
+      - ai_finding_ids
+      - injection_successes        # AI success-rate per finding (success-rate-below-threshold → downgrade)
+      - chain_analysis_results_path
+    outputs:
+      - severity_calibration_path
+      - calibration_summary
+
+  compliance:
+    description: "Compliance mapping: OWASP LLM Top 10 (2025) + MITRE ATLAS + CWE/CVSS"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6
+    tests: []  # No test IDs — mapping only
+    count: 0
+    checkpoint_file: "reports/compliance-results.json"
+    inputs:
+      - ai_finding_ids
+      - all_test_results
+      - severity_calibration_path
+    outputs:
+      - compliance_mapping_table   # OWASP LLM + ATLAS for report-writer
+
+  report-writer:
+    description: "Generate the full markdown AI Security Assessment Report (primary deliverable)"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6
+    tests: []  # No test IDs — report generation only
+    count: 0
+    checkpoint_file: null
+    inputs:
+      - all_test_results          # Complete in-scope coverage map (scope-derived count)
+      - ai_finding_ids
+      - ai_report_path            # AI analysis synthesis (the body) from ai-analysis
+      - compliance_mapping        # From compliance (OWASP LLM + ATLAS)
+      - severity_calibration      # From severity-calibrator
+      - input_surface_map         # From ai-recon
+      - injection_successes       # From ai-redteam (success-rate columns)
+      - chain_results             # From chain-analysis
+      - assessment_metadata
+    outputs:
+      - report_markdown_path      # Main AI Security Assessment Report .md
+
+  report-enrichment:
+    description: "Validate report completeness against CLAUDE.md standards and fill gaps"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6
+    tests: []  # No test IDs — validation and enrichment only
+    count: 0
+    checkpoint_file: "reports/report-enrichment-results.json"
+    inputs:
+      - report_markdown_path
+      - ai_finding_ids
+      - ai_targets
+    outputs:
+      - enriched_report_markdown_path
+      - enrichment_results
+
+  pdf-renderer:
+    description: "Render the AI Security Assessment Report to PDF and register it in the cloud Reports page"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6
+    tests: []  # No test IDs — PDF rendering only
+    count: 0
+    checkpoint_file: null
+    inputs:
+      - report_markdown_path
+      - assessment_id    # REQUIRED — UUID of the cloud assessments row
+    outputs:
+      - report_pdf_path
+      - report_cloud_uploaded
+
+# Verification rules
+verification:
+  # matrix_total here is the AI subset of config/test-matrix.yml. The number the
+  # lead actually verifies against is the SCOPE-DERIVED in-scope count, computed at
+  # runtime from each AI test's applies_when (kind gates) vs the active ai_targets.
+  # Never hardcode the per-run denominator — it changes with which kinds are in
+  # scope (a model_api-only run N_As the agent/rag-only tests) and grows as the
+  # matrix gains AI tests.
+  matrix_total_ai: 23  # current AI block: 5 recon + 18 redteam (informational only)
+  in_scope_count: "derive at runtime from the ai: block applies_when (kind gates) vs ai_targets — do not hardcode"
+  in_scope_rule: >
+    An AI test is in scope when ai_targets is configured AND (1) it has no kind gate
+    (always-on for any AI target), or (2) its applies_when names a kind that is DECLARED
+    on a target OR DETECTED on one by AI-RECON-05's cross-kind capability probe
+    (e.g. AI-EA-01 runs when an agent target is declared OR a chat_app is found to
+    tool-call). Detection only EXPANDS the set: the lead recomputes the in-scope AI
+    tests after ai-recon (Phase 2) using declared ∪ detected, so a kind-gated test can
+    move from the N_A appendix into the active run. An undeclared detected capability is
+    itself a finding (source: ai_capability_detection).
+  total_agents: 10  # 1 lead + 3 AI workers (ai-recon, ai-redteam, ai-analysis) + chain-analysis + severity-calibrator + compliance + report-writer + report-enrichment + pdf-renderer
+  status_values: ["PASS", "FAIL", "N_A", "BLOCKED"]
+  banned_statuses: ["SKIPPED"]
+  lead_must_verify_before_report: true
+  lead_passes_to_report: ["IN_SCOPE_TEST_IDS", "IN_SCOPE_TEST_COUNT"]
+  missing_test_recovery: "Lead runs missing tests directly or re-spawns agent"
+  ai_safety_mandate: >
+    ai-redteam follows the AI Safety Mandate (docs/ai-surface-plan.md §10):
+    consumption probe-only, no persistent poisoning, excessive agency is
+    capability-not-execution (capture the tool call, never the side effect), and
+    only the customer's own ai_targets — never the upstream model provider.

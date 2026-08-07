@@ -1,0 +1,243 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "execution-overview.schema.json",
+  "title": "ExecutionOverview",
+  "description": "The shared contract for an assessment's execution-meta. Two producers emit this same shape: the harness trace analyzer (from LLM transcripts) and the production app (from the cloud DB). Optional blocks let the production derive-only path omit what it cannot compute; the harness fills the integrity/dead-end/per-agent blocks that only a transcript exposes. This JSON Schema is the source of truth; the two TS mirrors (mcp-server/src/logging/execution-overview.ts and frontend/lib/types.ts) must stay in lockstep with it.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "executionId",
+    "source",
+    "generatedAt",
+    "success",
+    "counts",
+    "testRollup",
+    "integrity",
+    "duration",
+    "tokens",
+    "findingsBySeverity",
+    "findingsTotal"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "executionId": { "type": "string" },
+    "source": { "enum": ["harness-trace", "production"] },
+    "generatedAt": { "type": "string" },
+    "model": { "type": ["string", "null"] },
+
+    "success": {
+      "type": "object",
+      "required": ["ok", "summary", "hardFailures", "softWarnings"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "verdict": { "enum": ["complete", "partial", "blocked", "failed", "unknown"] },
+        "summary": { "type": "string" },
+        "hardFailures": { "type": "array", "items": { "type": "string" } },
+        "softWarnings": { "type": "array", "items": { "type": "string" } },
+        "degenerateRun": { "type": "boolean" }
+      }
+    },
+
+    "counts": {
+      "type": "object",
+      "required": [
+        "toolExecutions",
+        "distinctTools",
+        "subagentSpawns",
+        "distinctAgentTypes",
+        "turns",
+        "steps",
+        "findingsCreated",
+        "errors",
+        "retries"
+      ],
+      "properties": {
+        "toolExecutions": { "type": "integer" },
+        "distinctTools": { "type": "integer" },
+        "subagentSpawns": { "type": "integer" },
+        "distinctAgentTypes": { "type": "integer" },
+        "turns": { "type": "integer" },
+        "steps": { "type": "integer" },
+        "findingsCreated": { "type": "integer" },
+        "errors": { "type": "integer" },
+        "retries": { "type": "integer" }
+      }
+    },
+
+    "targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target"],
+        "properties": {
+          "target": { "type": "string" },
+          "inScope": { "type": ["boolean", "null"] },
+          "dimension": { "type": ["string", "null"] },
+          "reason": { "type": ["string", "null"] },
+          "toolExecutions": { "type": "integer" }
+        }
+      }
+    },
+
+    "testRollup": {
+      "type": "object",
+      "required": ["total", "pass", "fail", "n_a", "blocked", "skipped"],
+      "properties": {
+        "total": { "type": "integer" },
+        "pass": { "type": "integer" },
+        "fail": { "type": "integer" },
+        "n_a": { "type": "integer" },
+        "blocked": { "type": "integer" },
+        "skipped": { "type": "integer" },
+        "byStatus": { "type": "object" }
+      }
+    },
+
+    "integrity": {
+      "type": "object",
+      "required": ["fakedPass", "provenanceBlocked", "unverifiable", "consistent"],
+      "properties": {
+        "consistent": { "type": "boolean" },
+        "fakedPass": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["testId", "tool", "claimedStatus", "backingToolCalls"],
+            "properties": {
+              "testId": { "type": "string" },
+              "tool": { "type": "string" },
+              "claimedStatus": { "type": "string" },
+              "backingToolCalls": { "type": "integer" }
+            }
+          }
+        },
+        "provenanceBlocked": { "type": "array", "items": { "type": "string" } },
+        "unverifiable": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["testId", "reason"],
+            "properties": {
+              "testId": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "calls", "errors", "retries"],
+        "properties": {
+          "name": { "type": "string" },
+          "calls": { "type": "integer" },
+          "errors": { "type": "integer" },
+          "retries": { "type": "integer" },
+          "agentsUsing": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["agentType", "turns", "toolExecutions", "findingsCreated", "tokens"],
+        "properties": {
+          "agentType": { "type": "string" },
+          "transcript": { "type": ["string", "null"] },
+          "turns": { "type": "integer" },
+          "toolExecutions": { "type": "integer" },
+          "findingsCreated": { "type": "integer" },
+          "tokens": { "$ref": "#/definitions/tokenUsage" },
+          "durationMs": { "type": ["integer", "null"] },
+          "tokensPerFinding": { "type": ["number", "null"] }
+        }
+      }
+    },
+
+    "deadEnds": {
+      "type": "object",
+      "required": ["erroredToolsNeverRetried", "longGapsNoFinding", "degenerateRun"],
+      "properties": {
+        "degenerateRun": { "type": "boolean" },
+        "erroredToolsNeverRetried": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tool"],
+            "properties": {
+              "tool": { "type": "string" },
+              "testId": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "longGapsNoFinding": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["startTs", "endTs", "gapMs"],
+            "properties": {
+              "startTs": { "type": "string" },
+              "endTs": { "type": "string" },
+              "gapMs": { "type": "integer" },
+              "toolCalls": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+
+    "duration": {
+      "type": "object",
+      "required": ["startTs", "endTs", "wallMs"],
+      "properties": {
+        "startTs": { "type": ["string", "null"] },
+        "endTs": { "type": ["string", "null"] },
+        "wallMs": { "type": ["integer", "null"] }
+      }
+    },
+
+    "tokens": { "$ref": "#/definitions/tokenUsage" },
+    "costUsd": { "type": ["number", "null"] },
+
+    "findingsBySeverity": {
+      "type": "object",
+      "required": ["critical", "high", "medium", "low"],
+      "properties": {
+        "critical": { "type": "integer" },
+        "high": { "type": "integer" },
+        "medium": { "type": "integer" },
+        "low": { "type": "integer" },
+        "info": { "type": "integer" }
+      }
+    },
+    "findingsTotal": { "type": "integer" },
+
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "test_results": { "enum": ["db", "derived", "absent"] },
+        "scope": { "enum": ["db", "derived", "absent"] },
+        "phases": { "enum": ["db", "derived", "absent"] }
+      }
+    }
+  },
+
+  "definitions": {
+    "tokenUsage": {
+      "type": "object",
+      "required": ["inputTokens", "outputTokens", "cacheCreationInputTokens", "cacheReadInputTokens", "totalTokens"],
+      "properties": {
+        "inputTokens": { "type": "integer" },
+        "outputTokens": { "type": "integer" },
+        "cacheCreationInputTokens": { "type": "integer" },
+        "cacheReadInputTokens": { "type": "integer" },
+        "totalTokens": { "type": "integer" }
+      }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "kali-pentest": {
+      "command": "node",
+      "args": ["${CLAUDE_PROJECT_DIR}/mcp-server/dist/index.js"],
+      "cwd": "${CLAUDE_PROJECT_DIR}/mcp-server",
+      "env": {
+        "DOCKER_CONTAINER": "kali-pentest",
+        "CONFIG_PATH": "${CLAUDE_PROJECT_DIR}/config",
+        "SCOPE_CONFIG_PATH": "${CLAUDE_PROJECT_DIR}/config/scope.yml",
+        "LOG_PATH": "${CLAUDE_PROJECT_DIR}/logs",
+        "DATA_PATH": "${CLAUDE_PROJECT_DIR}/data"
+      }
+    }
+  }
+}

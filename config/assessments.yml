@@ -1,0 +1,46 @@
+# Assessment Target Profiles — TEMPLATE
+#
+# `/assess <profile-name>` reads this file to look up target/auth/repo/report
+# settings for a named engagement. The committed version is a public template
+# with no real targets. Define your own profiles in
+# `config/assessments.local.yml` (gitignored) so they don't ship to other
+# repo consumers.
+#
+# Loader order: `assessments.local.yml` (if present) → `assessments.yml`.
+
+profiles:
+  # Generic example — copy this block to your local override and customize.
+  example-app:
+    name: "Example Application"
+    target: "https://api.staging.example.com"
+    auth:
+      method: "POST"                                              # POST | OTP | TOTP
+      endpoint: "/auth/login"
+      body: '{"email":"${EXAMPLE_USER}","password":"${EXAMPLE_PASS}"}'
+      token_field: "access_token"
+      token_type: "Bearer"
+    # Resolution priority:
+    #   1. repo_name — match by display name in Code Repositories registry
+    #      (works for both local-directory and GitHub-attached repos).
+    #      Recommended — let the desktop manage the path.
+    #   2. container_repo_path — explicit container-side path (legacy).
+    #   3. repo_path — host path that gets translated to /mnt/host-home/...
+    repo_name: "example-app"                                       # display name in Code Repositories
+    repo_path: "~/projects/example-app"                            # legacy fallback — host path
+    container_repo_path: "/mnt/host-home/projects/example-app"     # legacy fallback — mapped into Kali
+    previous_reports:
+      assessment: "reports/example-app-assessment-YYYY-MM-DD.md"
+    report_prefix: "example-app"
+    notes: "Generic profile shape — see config/assessments.local.yml for real engagements"
+
+  # OTP/email auth example
+  example-otp-app:
+    name: "Example OTP App"
+    target: "https://app.example.com"
+    auth:
+      method: "OTP"
+      otp_email: "${EXAMPLE_OTP_EMAIL}"
+    repo_path: "~/projects/example-otp-app"
+    container_repo_path: "/mnt/host-home/projects/example-otp-app"
+    report_prefix: "example-otp-app"
+    notes: "OTP email auth — Maestro will prompt for the code interactively"

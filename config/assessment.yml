@@ -1,0 +1,79 @@
+# Assessment Configuration — example
+#
+# Schema reference for the `config` argument of run_orchestrator and friends
+# (see mcp-server/src/config/assessment-config.ts, which loads this path).
+#
+# This is a TEMPLATE. Replace every value below with your own authorized target.
+# Runtime configuration normally comes from the cloud backend; this file is the
+# local dev fallback.
+#
+# You must hold documented authorization for any target you put here. See NOTICE.
+
+mode: interactive
+
+targets:
+  - https://app.example.com
+
+# Authentication configuration.
+#
+# Supported `type` values: session, basic, bearer, api_key, oauth2, otp_email,
+# none. `credentials_ref` names an entry in config/credentials.yml — never put a
+# password or token in this file.
+auth:
+  type: otp_email
+  credentials_ref: example-app
+
+  # Browser-based login flow, replayed by Playwright before testing starts.
+  # Selectors are deliberately broad so the same flow survives minor markup
+  # changes; narrow them if your login page needs it.
+  browser_login:
+    - action: navigate
+      url: https://app.example.com
+      description: "Navigate to the application"
+
+    - action: wait_for
+      selector: "input[type='email'], input[name='email'], input[name='username']"
+      state: visible
+      timeout: 15000
+      description: "Wait for login form to appear"
+
+    - action: fill
+      selector: "input[type='email'], input[name='email'], input[name='username']"
+      value: "security-tester@example.com"
+      description: "Enter the test account's email address"
+
+    - action: click
+      selector: "button[type='submit'], button:has-text('Sign in'), button:has-text('Log in'), button:has-text('Continue'), button:has-text('Next')"
+      description: "Submit email / proceed to OTP"
+
+    # Pauses the run and prompts the operator for the emailed code. Only usable
+    # in `mode: interactive` — a non-interactive run marks auth tests BLOCKED
+    # rather than guessing.
+    - action: prompt_otp
+      description: "Wait for the operator to provide the OTP code from email"
+      otp_timeout: 300
+
+  session_ttl_minutes: 30
+
+# Browser configuration
+browser:
+  is_spa: true
+  persist_session: true
+  start_url: https://app.example.com
+
+# Testing focus
+focus:
+  exclude_vuln_types:
+    # Destructive classes are refused by the safety layer regardless; listing
+    # them here also keeps them out of the planned test set.
+    - dos
+
+# Reporting
+reporting:
+  format: markdown
+  min_severity: low
+
+notes: |
+  Example application assessment using email-based OTP authentication.
+  Interactive mode — the run pauses to prompt for OTP codes during the auth phase.
+  Full assessment: recon → auth → vuln-scan → web-app → exploit → qa → report.

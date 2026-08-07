@@ -1,0 +1,60 @@
+# Commercial Components Manifest
+#
+# Authoritative list of paths in this repository that are NOT covered by the
+# Apache License 2.0 in ./LICENSE. These are governed by ./LICENSE-COMMERCIAL.
+#
+# Format: one path per line, relative to the repository root. A trailing slash
+# means the entire directory tree. Lines starting with '#' are comments.
+#
+# This file is machine-readable on purpose — CI reads it to verify that every
+# listed directory still carries its own LICENSE file, so a path can never
+# quietly lose its commercial marker.
+
+# ─── The agent prompt corpus ─────────────────────────────────────────────────
+# 23 specialized worker agents plus the shared preamble. This is the accumulated
+# assessment craft: the exploitation mandate, the multi-step exploit protocol,
+# the per-surface methodologies, the evidence standards. Plain markdown, and the
+# single most copyable asset in the product.
+.claude/agents/
+
+# ─── Orchestration protocols and report standards ────────────────────────────
+# Phase sequencing, test-to-agent mapping, coverage accounting, the "ALL means
+# ALL" report rules, the Cycode SCA validation protocol, companion-report
+# structure.
+skills/
+
+# ─── Deterministic workflow scripts ──────────────────────────────────────────
+# The three-chunk Workflow orchestration path (recon / exploit / report).
+.claude/workflows/
+
+# ─── Oracle verification layer ───────────────────────────────────────────────
+# The six oracles and the OAST interaction client. The property that the LLM
+# structurally cannot write `verified` — it supplies the experiment, never the
+# verdict — lives here.
+mcp-server/src/verification/
+mcp-server/src/tools/verification.ts
+
+# ─── Multi-tenant control plane ──────────────────────────────────────────────
+# Email-to-org discovery, the customer registry backed by Secrets Manager, and
+# license validation. Self-hosted deployments do not use these paths at all —
+# see SELF-HOSTING.md, which replaces them with a local config file.
+frontend/lib/customer-registry.ts
+frontend/lib/license-guard.ts
+frontend/app/api/discover/
+frontend/app/api/license/
+
+# ─── Deliberately NOT listed (i.e. Apache-2.0) ───────────────────────────────
+# For the avoidance of doubt, the following are part of the open core:
+#
+#   mcp-server/          (except the verification paths above) — every security
+#                        tool handler: recon, web, API, cloud, identity, AI
+#   docker/              the Kali toolkit image definition
+#   crates/              shared Rust types
+#   backend-rs/          the sync API, including the attack-graph substrate and
+#                        the recursive-CTE pathfinder in src/routes/graph.rs
+#   frontend/            the desktop application and its Tauri backend
+#   config/              scope, test matrix, team assessment mapping
+#   tests-e2e-*/         the end-to-end harnesses
+#
+# The graph substrate is open on purpose: a pathfinder with no agents to feed it
+# is inert, and a self-hoster needs it for the open core to be worth running.

@@ -1,0 +1,536 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter), "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-mono: var(--font-jetbrains-mono), "JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+
+.dark {
+  /* Deep warm charcoal background — warm undertone */
+  --background: oklch(0.07 0.008 55);
+  --foreground: oklch(0.93 0.01 65);
+
+  /* Card surfaces — warm dark elevation */
+  --card: oklch(0.11 0.008 55);
+  --card-foreground: oklch(0.93 0.01 65);
+
+  /* Popover — slightly lighter warm surface */
+  --popover: oklch(0.13 0.008 55);
+  --popover-foreground: oklch(0.93 0.01 65);
+
+  /* Primary — Maestro Orange (brand color) */
+  --primary: oklch(0.72 0.17 55);
+  --primary-foreground: oklch(0.12 0.01 55);
+
+  /* Secondary — Warm dark surface */
+  --secondary: oklch(0.15 0.008 55);
+  --secondary-foreground: oklch(0.90 0.01 55);
+
+  /* Muted — Warm low contrast */
+  --muted: oklch(0.15 0.008 55);
+  --muted-foreground: oklch(0.55 0.01 55);
+
+  /* Accent — Lighter warm amber for highlights */
+  --accent: oklch(0.78 0.15 65);
+  --accent-foreground: oklch(0.10 0 0);
+
+  /* Destructive — Vivid red */
+  --destructive: oklch(0.62 0.22 25);
+
+  /* Borders — warm-tinted white */
+  --border: oklch(1 0.01 55 / 8%);
+  --input: oklch(1 0.01 55 / 10%);
+  --ring: oklch(0.72 0.17 55);
+
+  /* Chart colors — Brand-anchored palette */
+  --chart-1: oklch(0.72 0.17 55);    /* Maestro Orange */
+  --chart-2: oklch(0.65 0.18 235);   /* Blue */
+  --chart-3: oklch(0.65 0.18 155);   /* Emerald */
+  --chart-4: oklch(0.78 0.15 65);    /* Light Amber */
+  --chart-5: oklch(0.62 0.22 25);    /* Red */
+
+  /* Sidebar — Deeper warm black */
+  --sidebar: oklch(0.05 0.008 55);
+  --sidebar-foreground: oklch(0.85 0.01 55);
+  --sidebar-primary: oklch(0.72 0.17 55);
+  --sidebar-primary-foreground: oklch(0.12 0 0);
+  --sidebar-accent: oklch(0.13 0.01 55);
+  --sidebar-accent-foreground: oklch(0.93 0.01 65);
+  --sidebar-border: oklch(1 0.01 55 / 6%);
+  --sidebar-ring: oklch(0.72 0.17 55);
+
+  /* Severity semantic colors */
+  --severity-critical: oklch(0.62 0.22 25);
+  --severity-high: oklch(0.72 0.18 45);
+  --severity-medium: oklch(0.80 0.16 85);
+  --severity-low: oklch(0.65 0.18 235);
+  --severity-info: oklch(0.55 0.08 260);
+}
+
+/* ============================================
+   Base Styles
+   ============================================ */
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* ============================================
+   Glass Card System
+   ============================================ */
+
+.glass {
+  background: oklch(1 0.01 55 / 3%);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid oklch(1 0.01 55 / 6%);
+}
+
+.glass-strong {
+  background: oklch(1 0.01 55 / 6%);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid oklch(1 0.01 55 / 8%);
+}
+
+.glass-card {
+  background: oklch(0.11 0.008 55 / 80%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid oklch(1 0.01 55 / 6%);
+  transition: all 0.2s ease;
+}
+
+.glass-card:hover {
+  background: oklch(0.13 0.008 55 / 85%);
+  border-color: oklch(0.72 0.17 55 / 15%);
+  box-shadow: 0 8px 32px oklch(0.72 0.17 55 / 8%);
+}
+
+/* ============================================
+   Glow Effects
+   ============================================ */
+
+.glow-brand {
+  box-shadow: 0 0 20px oklch(0.72 0.17 55 / 18%),
+              0 0 40px oklch(0.72 0.17 55 / 6%);
+}
+
+.glow-brand-sm {
+  box-shadow: 0 0 10px oklch(0.72 0.17 55 / 14%);
+}
+
+.glow-critical {
+  box-shadow: 0 0 20px oklch(0.62 0.22 25 / 20%),
+              inset 0 1px 0 oklch(0.62 0.22 25 / 10%);
+}
+
+.glow-high {
+  box-shadow: 0 0 20px oklch(0.72 0.18 45 / 20%),
+              inset 0 1px 0 oklch(0.72 0.18 45 / 10%);
+}
+
+.glow-medium {
+  box-shadow: 0 0 20px oklch(0.80 0.16 85 / 15%),
+              inset 0 1px 0 oklch(0.80 0.16 85 / 10%);
+}
+
+.glow-low {
+  box-shadow: 0 0 20px oklch(0.65 0.18 235 / 15%),
+              inset 0 1px 0 oklch(0.65 0.18 235 / 10%);
+}
+
+/* ============================================
+   Background Grid Pattern
+   ============================================ */
+
+.bg-grid {
+  background-image:
+    linear-gradient(oklch(1 0.01 55 / 3%) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(1 0.01 55 / 3%) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+.bg-grid-sm {
+  background-image:
+    linear-gradient(oklch(1 0.01 55 / 2%) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(1 0.01 55 / 2%) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Radial fade for grid — very subtle, just softens edges */
+.bg-grid-fade {
+  mask-image: radial-gradient(ellipse 120% 100% at 50% 0%, black 70%, oklch(0 0 0 / 40%) 100%);
+  -webkit-mask-image: radial-gradient(ellipse 120% 100% at 50% 0%, black 70%, oklch(0 0 0 / 40%) 100%);
+}
+
+/* ============================================
+   Gradient Accents
+   ============================================ */
+
+.gradient-border-l {
+  position: relative;
+}
+
+.gradient-border-l::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(
+    180deg,
+    oklch(0.72 0.17 55) 0%,
+    oklch(0.72 0.17 55 / 20%) 100%
+  );
+}
+
+/* ============================================
+   Severity Accent Borders
+   ============================================ */
+
+.severity-border-critical {
+  border-left: 3px solid oklch(0.62 0.22 25);
+}
+
+.severity-border-high {
+  border-left: 3px solid oklch(0.72 0.18 45);
+}
+
+.severity-border-medium {
+  border-left: 3px solid oklch(0.80 0.16 85);
+}
+
+.severity-border-low {
+  border-left: 3px solid oklch(0.65 0.18 235);
+}
+
+.severity-border-info {
+  border-left: 3px solid oklch(0.55 0.08 260);
+}
+
+/* ============================================
+   Custom Scrollbar
+   ============================================ */
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: oklch(0.72 0.08 55 / 15%);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.72 0.10 55 / 25%);
+}
+
+/* ============================================
+   Animations
+   ============================================ */
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+.animate-slide-in {
+  animation: slide-in-left 0.25s ease-out forwards;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    oklch(0.72 0.08 55 / 0%) 0%,
+    oklch(0.72 0.08 55 / 8%) 50%,
+    oklch(0.72 0.08 55 / 0%) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s ease-in-out infinite;
+}
+
+/* Staggered children animation */
+.stagger-children > * {
+  opacity: 0;
+  animation: fade-in 0.3s ease-out forwards;
+}
+
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 50ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 100ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 150ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 200ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 250ms; }
+.stagger-children > *:nth-child(7) { animation-delay: 300ms; }
+.stagger-children > *:nth-child(8) { animation-delay: 350ms; }
+
+/* ============================================
+   Interactive States
+   ============================================ */
+
+.hover-lift {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px oklch(0 0 0 / 25%);
+}
+
+/* ============================================
+   Badge Variants
+   ============================================ */
+
+.badge-critical {
+  background: oklch(0.62 0.22 25 / 15%);
+  color: oklch(0.75 0.18 25);
+  border: 1px solid oklch(0.62 0.22 25 / 20%);
+}
+
+.badge-high {
+  background: oklch(0.72 0.18 45 / 15%);
+  color: oklch(0.82 0.15 45);
+  border: 1px solid oklch(0.72 0.18 45 / 20%);
+}
+
+.badge-medium {
+  background: oklch(0.80 0.16 85 / 15%);
+  color: oklch(0.88 0.13 85);
+  border: 1px solid oklch(0.80 0.16 85 / 20%);
+}
+
+.badge-low {
+  background: oklch(0.65 0.18 235 / 15%);
+  color: oklch(0.75 0.14 235);
+  border: 1px solid oklch(0.65 0.18 235 / 20%);
+}
+
+.badge-info {
+  background: oklch(0.55 0.08 260 / 15%);
+  color: oklch(0.70 0.06 260);
+  border: 1px solid oklch(0.55 0.08 260 / 20%);
+}
+
+/* ============================================
+   Status Indicators
+   ============================================ */
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  position: relative;
+}
+
+.status-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  opacity: 0.3;
+}
+
+.status-dot-pulse::after {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* ============================================
+   Noise Texture Overlay
+   ============================================ */
+
+.noise-overlay::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  opacity: 0.015;
+  pointer-events: none;
+  z-index: 9999;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+  background-repeat: repeat;
+  background-size: 256px 256px;
+}
+
+/* ============================================
+   In-app documentation pages (docs/[...slug])
+   Self-contained black-on-white typography. The app has no
+   @tailwindcss/typography plugin, so `prose` classes are no-ops —
+   the docs render markdown into a white "sheet" and rely on these
+   scoped rules instead. Scoped to .doc-prose so nothing else is affected.
+   ============================================ */
+.doc-prose {
+  color: #3f3f46;            /* zinc-700 */
+  font-size: 0.875rem;
+  line-height: 1.65;
+}
+.doc-prose > :first-child { margin-top: 0; }
+.doc-prose h1, .doc-prose h2, .doc-prose h3, .doc-prose h4 {
+  color: #18181b;            /* zinc-900 */
+  letter-spacing: -0.01em;
+  font-weight: 600;
+}
+.doc-prose h1 { font-size: 1.5rem; font-weight: 700; margin: 0 0 1rem; }
+.doc-prose h2 {
+  font-size: 1.15rem; margin: 2rem 0 0.85rem;
+  padding-bottom: 0.4rem; border-bottom: 1px solid #e4e4e7;
+}
+.doc-prose h3 { font-size: 0.98rem; color: #27272a; margin: 1.5rem 0 0.5rem; }
+.doc-prose p { margin: 0.75rem 0; }
+.doc-prose strong { color: #18181b; font-weight: 600; }
+.doc-prose a { color: #2563eb; font-weight: 500; text-decoration: none; }
+.doc-prose a:hover { text-decoration: underline; }
+.doc-prose ul, .doc-prose ol { margin: 0.75rem 0; padding-left: 1.4rem; }
+.doc-prose ul { list-style: disc; }
+.doc-prose ol { list-style: decimal; }
+.doc-prose li { margin: 0.3rem 0; }
+.doc-prose li::marker { color: #a1a1aa; }
+.doc-prose code {
+  color: #db2777;            /* pink-600 */
+  background: #f4f4f5;       /* zinc-100 */
+  padding: 0.1rem 0.35rem; border-radius: 0.25rem;
+  font-size: 0.85em; font-weight: 500;
+}
+.doc-prose pre {
+  background: #fafafa; color: #27272a;
+  border: 1px solid #e4e4e7; border-radius: 0.5rem;
+  padding: 0.9rem 1rem; overflow-x: auto; margin: 1rem 0;
+  font-size: 0.8rem; line-height: 1.5;
+}
+.doc-prose pre code {
+  background: none; color: inherit; padding: 0;
+  font-weight: 400; font-size: inherit;
+}
+.doc-prose table {
+  width: 100%; border-collapse: collapse; margin: 1rem 0;
+  font-size: 0.8rem; display: block; overflow-x: auto;
+}
+.doc-prose th, .doc-prose td {
+  border: 1px solid #e4e4e7; padding: 0.45rem 0.7rem;
+  text-align: left; vertical-align: top;
+}
+.doc-prose th { background: #f4f4f5; color: #18181b; font-weight: 600; }
+.doc-prose td { color: #3f3f46; }
+.doc-prose blockquote {
+  color: #52525b; border-left: 3px solid #d4d4d8;
+  padding-left: 1rem; margin: 1rem 0;
+}
+.doc-prose hr { border: 0; border-top: 1px solid #e4e4e7; margin: 1.5rem 0; }
+
+/* Tighter spacing for markdown rendered inside a callout box. */
+.doc-prose-tight { font-size: 0.84rem; }
+.doc-prose-tight p { margin: 0.35rem 0; }
+.doc-prose-tight ul, .doc-prose-tight ol { margin: 0.35rem 0; }
+.doc-prose-tight > :first-child { margin-top: 0; }
+.doc-prose-tight > :last-child { margin-bottom: 0; }

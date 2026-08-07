@@ -1,0 +1,87 @@
+Maestro Commercial License
+Copyright (c) 2026 Groovy Security
+
+This license governs the files and directories listed in COMMERCIAL-COMPONENTS
+at the root of this repository. Everything else in this repository is licensed
+under the Apache License, Version 2.0 (see LICENSE).
+
+-------------------------------------------------------------------------------
+1. WHY THESE FILES ARE HERE
+
+These files are present in an otherwise open repository because Maestro will
+not run without them. The desktop application mounts the agent definitions and
+skill protocols into its container at runtime; removing them would produce a
+distribution that builds but cannot perform an assessment.
+
+Their presence is therefore a technical necessity, not a grant of license.
+
+-------------------------------------------------------------------------------
+2. GRANT
+
+Subject to Section 3, Groovy Security grants you a non-exclusive,
+non-transferable, non-sublicensable license to use, execute, and modify the
+files listed in COMMERCIAL-COMPONENTS, for your own internal security testing,
+for as long as you hold either:
+
+  (a) an active Maestro subscription from Groovy Security; or
+  (b) written authorization from Groovy Security.
+
+"Internal security testing" includes testing systems you own or are
+contractually authorized to test, and includes delivering assessment reports to
+the owner of the tested system.
+
+-------------------------------------------------------------------------------
+3. RESTRICTIONS
+
+Without a separate written agreement with Groovy Security, you may not:
+
+  (a) redistribute these files, in original or modified form, whether
+      standalone or bundled with other software;
+
+  (b) offer the functionality of these files to third parties as a hosted,
+      managed, or multi-tenant service;
+
+  (c) use these files to build or train a competing automated security
+      assessment product, including using the agent prompts or skill protocols
+      as training data or as source material for derived prompt sets;
+
+  (d) remove or alter the copyright notices, the per-directory LICENSE files,
+      or the COMMERCIAL-COMPONENTS manifest;
+
+  (e) use these files after your subscription lapses, other than to read them
+      for the purpose of migrating away.
+
+Modifications you make for your own internal use are permitted and are yours;
+they remain subject to the restrictions above.
+
+-------------------------------------------------------------------------------
+4. RELATIONSHIP TO THE APACHE-LICENSED CORE
+
+The Apache-2.0 license on the rest of this repository is unconditional and is
+not revoked if this commercial license terminates. You may fork, modify, and
+redistribute the open core freely, including building your own agent
+definitions and skill protocols to replace the ones covered here.
+
+Nothing in this license restricts your rights under Apache-2.0 to any file not
+listed in COMMERCIAL-COMPONENTS.
+
+-------------------------------------------------------------------------------
+5. NO WARRANTY
+
+THESE FILES ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
+GROOVY SECURITY BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING
+FROM, OUT OF, OR IN CONNECTION WITH THESE FILES OR THEIR USE.
+
+-------------------------------------------------------------------------------
+6. AUTHORIZED USE ONLY
+
+Maestro performs active exploitation against live systems. You are responsible
+for holding documented authorization for every target you assess. Neither this
+license nor the Apache-2.0 license on the open core conveys any authorization
+to test systems you do not own.
+
+-------------------------------------------------------------------------------
+
+Licensing inquiries: support@groovysec.com

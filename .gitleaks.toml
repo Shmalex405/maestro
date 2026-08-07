@@ -1,0 +1,75 @@
+# gitleaks configuration for Maestro.
+#
+# This repository is a security testing tool, so it legitimately contains a lot
+# of secret-SHAPED data: example JWTs in methodology docs, placeholder API keys
+# in configuration guides, and payload fixtures in tests. Without an allowlist,
+# a scan drowns in those and stops being read — which is how a real secret slips
+# through.
+#
+# The rule here: allowlist by PATH only where the path cannot hold a real
+# secret (build output, vendored dependencies, gitignored local data), and
+# allowlist individual findings by FINGERPRINT with a stated reason. Never
+# allowlist a rule globally.
+#
+# Usage:
+#   gitleaks dir . --config .gitleaks.toml       # working tree
+#   gitleaks git . --config .gitleaks.toml       # history
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Paths that cannot contain committed secrets, plus reviewed examples."
+
+paths = [
+  # ── Build output and vendored dependencies ────────────────────────────────
+  # Rust .rmeta files embed PEM parsing test vectors from pkcs8/pem/
+  # elliptic-curve, which trip the private-key rule. None of it is ours and
+  # none of it is committed.
+  '''(^|/)target/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''(^|/)\.next/''',
+  '''(^|/)out/''',
+  '''(^|/)build/''',
+  '''(^|/)\.venv/''',
+  '''(^|/)__pycache__/''',
+  '''\.rmeta$''',
+  '''\.rlib$''',
+  '''package-lock\.json$''',
+
+  # ── Assessment output ─────────────────────────────────────────────────────
+  # reports/ holds real customer assessment reports: unredacted findings, PII,
+  # and live customer credentials, by design (see the Evidence Standard in
+  # CLAUDE.md). It is gitignored and must NEVER be committed. It is allowlisted
+  # here so a local scan is readable, NOT because its contents are safe.
+  # Anchored with (^|/) not ^ — `gitleaks dir` reports absolute paths, so a
+  # ^-anchored pattern silently matches nothing.
+  '''(^|/)reports/''',
+  '''(^|/)data/reports/''',
+  '''(^|/)demo-targets/''',
+
+  # ── Gitignored local working data ─────────────────────────────────────────
+  # These never reach a commit, so they cannot leak via git. They are listed so
+  # a LOCAL scan (which ignores .gitignore) stays readable; CI checks out only
+  # tracked files and never sees them.
+  #   .nodegoat/         — the NodeGoat e2e target, fetched at test time. Ships
+  #                        its own self-signed cert and demo config by design.
+  #   competitive-intel/ — scraped lead-gen data. Business-sensitive and full of
+  #                        third-party personal data; must never be committed.
+  '''(^|/)\.nodegoat/''',
+  '''(^|/)competitive-intel/''',
+]
+
+# ── Reviewed, non-secret example values ──────────────────────────────────────
+# Each entry was manually inspected. Fingerprint format is
+# <file>:<rule>:<line>, so a fingerprint stops matching if the line moves —
+# which is the point: a moved line gets re-reviewed rather than staying muted.
+regexes = [
+  # Terraform enum, not a key: key_algorithm = "KEY_ALG_RSA_2048"
+  '''KEY_ALG_RSA_2048''',
+  # Documentation placeholders with obviously fake payloads.
+  '''abc123def456''',
+  '''pk_test_51234567890abcdefghijklmnop''',
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIi''',
+]

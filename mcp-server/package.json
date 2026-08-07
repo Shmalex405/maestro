@@ -1,0 +1,45 @@
+{
+  "name": "kali-mcp-pentest",
+  "version": "1.0.0",
+  "description": "MCP Server for automated ethical hacking with Kali Linux",
+  "license": "Apache-2.0 AND LicenseRef-Maestro-Commercial",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "start:autonomous": "node dist/autonomous-runner.js",
+    "dev": "ts-node src/index.ts",
+    "dev:autonomous": "ts-node src/autonomous-runner.ts",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.24.0",
+    "@modelcontextprotocol/sdk": "^0.5.0",
+    "better-sqlite3": "^12.5.0",
+    "cors": "^2.8.5",
+    "csv-parse": "^5.5.0",
+    "dockerode": "^4.0.0",
+    "express": "^4.18.0",
+    "ip-cidr": "^3.1.0",
+    "js-yaml": "^4.1.1",
+    "nodemailer": "^6.9.0",
+    "uuid": "^9.0.0",
+    "yaml": "^2.3.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.0",
+    "@types/cors": "^2.8.0",
+    "@types/dockerode": "^3.3.0",
+    "@types/express": "^4.17.0",
+    "@types/jest": "^29.0.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.0.0",
+    "@types/nodemailer": "^6.4.0",
+    "@types/uuid": "^9.0.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.3.0"
+  }
+}

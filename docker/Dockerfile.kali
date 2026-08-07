@@ -1,0 +1,467 @@
+FROM kalilinux/kali-rolling:latest
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Block service starts during dpkg postinst — systemd-shipped packages
+# (or anything that registers services) try to invoke `systemctl start`
+# during install, which fails inside a Docker build because there's no
+# pid-1 systemd. Returning 101 from policy-rc.d tells dpkg "do nothing,
+# success" so the postinst exits 0 and the install completes. Standard
+# pattern for Debian/Kali docker builds; without it, transitive systemd
+# pulls (e.g. via golang-go on arm64) break the build with
+# "Sub-process /usr/bin/dpkg returned an error code (1)".
+#
+# `printf` (POSIX) interprets `\n` reliably — dash's /bin/sh `echo`
+# treats backslash escapes as literal, which would write a single-line
+# malformed shebang and silently disable the guard. The systemctl/initctl
+# shims are belt-and-suspenders for postinst hooks that bypass
+# invoke-rc.d / policy-rc.d and call systemctl directly.
+RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d \
+ && chmod +x /usr/sbin/policy-rc.d \
+ && ln -sf /bin/true /usr/bin/systemctl \
+ && ln -sf /bin/true /usr/sbin/initctl
+
+# Suppress the "minimal installation" login banner — we're not minimal,
+# we install kali-linux-headless plus pinned tools below. /root is the
+# zsh login dir for `docker exec -it ... /bin/zsh -lc`.
+RUN touch /root/.hushlogin
+
+# Update package lists
+RUN apt-get update
+
+# Install core utilities first
+RUN apt-get install -y --no-install-recommends \
+    curl wget git python3 python3-pip python3-venv jq ca-certificates \
+    && apt-get clean
+
+# Pull in the standard Kali pentest toolset via the headless meta-package.
+# Excludes GUI tools (we run headless in a container), keeps the standard
+# CLI surface that Kali users expect — burp-suite-community, hydra, john,
+# hashcat, mimikatz, recon-ng, set, theharvester, wireshark CLI, zap, etc.
+# Adds ~6-10GB but eliminates "tool not found" surprises during scans and
+# makes it the same toolkit a pentester would expect on bare-metal Kali.
+RUN apt-get install -y --no-install-recommends kali-linux-headless || true
+
+# Install network/pentest tools (allowing some to fail). These are pinned
+# below the meta-package so our specific versions take precedence (e.g.
+# nuclei templates compatibility).
+RUN apt-get install -y --no-install-recommends \
+    nmap nikto sqlmap ffuf dirb gobuster whatweb \
+    || true
+
+# Install additional tools that may not be in all repos
+RUN apt-get install -y --no-install-recommends \
+    nuclei amass subfinder exploitdb \
+    || true
+
+# Install heavier packages separately
+RUN apt-get install -y --no-install-recommends \
+    metasploit-framework \
+    || echo "metasploit install skipped - install manually if needed"
+
+# Install wpscan (Ruby-based)
+RUN apt-get install -y --no-install-recommends wpscan || true
+
+# Install build dependencies for Go tools
+RUN apt-get install -y --no-install-recommends golang-go npm libicu-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set Go path
+ENV GOPATH=/root/go
+ENV PATH=$PATH:$GOPATH/bin:/root/.local/bin
+
+# Install Python security tools.
+#
+# `--ignore-installed` skips pip's "uninstall existing first" step, which
+# fails on packages Debian shipped without a RECORD file (e.g.
+# `ruamel.yaml.clib`). Some `safety` / `semgrep` deps want newer versions
+# of those, and without this flag the build dies mid-pip with
+# `Cannot uninstall <pkg>: The package's contents are unknown`. Combined
+# with `--break-system-packages` (PEP 668 override since this is a
+# disposable container, not a host) it lets pip install over the apt-shipped
+# baseline.
+RUN pip3 install --break-system-packages --ignore-installed \
+    # Pentest tools
+    xsstrike \
+    dirsearch \
+    requests \
+    beautifulsoup4 \
+    # Code scanning tools
+    semgrep \
+    bandit \
+    safety \
+    detect-secrets \
+    njsscan
+
+# Install Node.js security tools
+RUN npm install -g retire ws
+
+# AI / LLM security testing — promptfoo is the PRIMARY backing tool for the
+# standalone AI assessment (see docs/ai-surface-plan.md §9). Node-based, light, and
+# it provides the deterministic provenance the gate keys on: until this is present,
+# the tool-provenance gate correctly BLOCKs every AI red-team test (TOOL_BINARIES
+# maps ai_probe_injection/etc. → promptfoo). Soft-fail so a registry hiccup never
+# bricks the image. garak (NVIDIA) is intentionally NOT installed here — it pulls
+# torch+transformers (multi-GB); size that delta with a spike before adding it.
+RUN npm install -g promptfoo || echo "promptfoo install skipped"
+
+# Install Playwright + Chromium for browser-based testing
+RUN npm install -g playwright@latest marked && \
+    npx playwright install --with-deps chromium || echo "Playwright install skipped"
+
+# Install Go security tools (gitleaks for secrets detection, grype for dependency scanning)
+RUN go install github.com/zricethezav/gitleaks/v8@latest || echo "gitleaks install skipped"
+# `go install` drops the binary in GOPATH/bin, which isn't on PATH — symlink it so
+# `command -v gitleaks` (and the provenance gate's availability probe) finds it.
+RUN ln -sf "$(go env GOPATH 2>/dev/null || echo /root/go)/bin/gitleaks" /usr/local/bin/gitleaks 2>/dev/null || echo "gitleaks symlink skipped"
+
+# interactsh-client — the out-of-band listener client for the `oast` oracle
+# (blind SSRF / SQLi / XXE / SSTI, where the callback IS the evidence).
+#
+# The client alone is not enough: it needs a SELF-HOSTED interactsh server the
+# org operates, configured via MAESTRO_OAST_SERVER (see
+# mcp-server/src/verification/oast.ts). We never fall back to a public instance —
+# a callback carries the target's IP and often exfiltrated data, and shipping
+# that to a third party would break the guarantee that assessment data stays with
+# the customer. With no server configured the oracle reports `oast_unavailable`
+# and the finding stays an honest unverified candidate.
+RUN go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest || echo "interactsh-client install skipped"
+RUN ln -sf "$(go env GOPATH 2>/dev/null || echo /root/go)/bin/interactsh-client" /usr/local/bin/interactsh-client 2>/dev/null || echo "interactsh-client symlink skipped"
+
+# Install grype and pre-pull its vulnerability DB (avoids 5+ min download at runtime)
+RUN curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin || echo "grype install skipped"
+RUN grype db update || true
+
+# IaC scanning — checkov in an ISOLATED venv so its (heavy) dependency tree can't
+# conflict with the main python env. Conflicts were why this was disabled before;
+# the venv resolves that. Soft-fail so a build issue never bricks the image.
+RUN python3 -m venv /opt/checkov \
+    && /opt/checkov/bin/pip install --no-cache-dir checkov \
+    && ln -sf /opt/checkov/bin/checkov /usr/local/bin/checkov \
+    || echo "checkov install skipped"
+
+# # KICS for IaC scanning (optional alternative; enable if checkov is insufficient)
+# RUN curl -sfL 'https://raw.githubusercontent.com/Checkmarx/kics/master/install.sh' | bash -s -- -b /usr/local/bin || true
+
+# Create working directories
+RUN mkdir -p /opt/pentest/{output,scripts,wordlists,repos}
+
+# Download common wordlists
+RUN wget -q https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt \
+    -O /opt/pentest/wordlists/common.txt || true
+
+# SSL/TLS testing
+RUN apt-get install -y --no-install-recommends testssl.sh sslscan || true
+
+# DNS tools
+RUN apt-get install -y --no-install-recommends dnsutils dnsrecon || true
+
+# iptables — required for Tier 3 outbound egress filtering. Applied at
+# container startup by /opt/pentest/scripts/egress-init.sh when
+# MAESTRO_TIER3_EGRESS=1. No-op when the flag is off, so this install is
+# safe regardless of whether the feature is enabled. Bundling it in the
+# image (vs apt-get install at runtime) keeps assessments offline-capable
+# and avoids adding a network dependency to the egress-enforcement path.
+RUN apt-get update && apt-get install -y --no-install-recommends iptables && rm -rf /var/lib/apt/lists/*
+
+# JWT tools
+RUN pip3 install --break-system-packages pyjwt[crypto]
+
+# WebSocket testing
+RUN npm install -g wscat
+
+# Async HTTP for race condition testing
+RUN pip3 install --break-system-packages aiohttp
+
+# Additional wordlists
+RUN mkdir -p /opt/pentest/wordlists && \
+    wget -q https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/api-endpoints.txt \
+      -O /opt/pentest/wordlists/api-endpoints.txt || true && \
+    wget -q https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/graphql.txt \
+      -O /opt/pentest/wordlists/graphql.txt || true
+
+# =============================================================================
+# CLOUD RED TEAM TOOLING
+# =============================================================================
+
+# --- Cloud CLIs ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    awscli \
+    && rm -rf /var/lib/apt/lists/*
+
+# Azure CLI
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash 2>/dev/null || echo "Azure CLI install skipped"
+
+# Google Cloud SDK
+RUN echo "deb [signed-by=/usr/share/keyrings/cloud.google.asc] https://packages.cloud.google.com/apt cloud-sdk main" \
+    | tee /etc/apt/sources.list.d/google-cloud-sdk.list && \
+    curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | tee /usr/share/keyrings/cloud.google.asc && \
+    apt-get update && apt-get install -y google-cloud-cli && \
+    rm -rf /var/lib/apt/lists/* \
+    || echo "GCloud SDK install skipped"
+
+# --- Detect architecture for multi-arch binary downloads ---
+# Maps Docker TARGETARCH (amd64/arm64) to tool-specific naming
+ARG TARGETARCH
+RUN echo "Building for architecture: $(dpkg --print-architecture)"
+
+# --- Cloud Security Scanners ---
+# Cloud security tools in venv (avoids Debian-managed package conflicts with PEP 668)
+RUN python3 -m venv /opt/cloud-tools && \
+    /opt/cloud-tools/bin/pip install --no-cache-dir --upgrade pip setuptools wheel
+ENV PATH="/opt/cloud-tools/bin:$PATH"
+
+# Install Python cloud tools one-by-one (so one failure doesn't block the rest)
+RUN /opt/cloud-tools/bin/pip install --no-cache-dir scoutsuite || echo "ScoutSuite install failed"
+RUN /opt/cloud-tools/bin/pip install --no-cache-dir prowler || echo "Prowler install failed"
+# NOTE: principalmapper is intentionally NOT installed in this Python 3.13 venv.
+# v1.1.5 (newest on PyPI) still does `from collections import Mapping` (removed in
+# Python 3.10), so it ImportErrors on every invocation here. It is installed below
+# into a dedicated Python 3.9 venv instead. Leaving it out of /opt/cloud-tools also
+# stops the broken copy from shadowing the working one on PATH.
+RUN /opt/cloud-tools/bin/pip install --no-cache-dir pacu || echo "Pacu install failed"
+RUN /opt/cloud-tools/bin/pip install --no-cache-dir cloud_enum || echo "cloud_enum install failed"
+RUN /opt/cloud-tools/bin/pip install --no-cache-dir s3scanner || echo "s3scanner install failed"
+
+# --- PMapper on an isolated Python 3.9 venv ---
+# principalmapper 1.1.5 (newest on PyPI) is incompatible with Python 3.10+ (it
+# imports Mapping/MutableMapping from `collections`). Kali rolling ships Python
+# 3.13, and deadsnakes is Ubuntu-only, so we provision a standalone CPython 3.9
+# via uv and install pmapper there, then symlink it onto PATH. The trailing
+# `pmapper --version` is a build-time smoke test so a regression is visible in
+# build logs instead of silently failing at assessment time.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    ln -sf /root/.local/bin/uv /usr/local/bin/uv && \
+    uv venv --python 3.9 /opt/pmapper && \
+    uv pip install --no-cache --python /opt/pmapper/bin/python principalmapper && \
+    ln -sf /opt/pmapper/bin/pmapper /usr/local/bin/pmapper && \
+    echo "PMapper smoke test:" && /usr/local/bin/pmapper --version \
+    || echo "PMapper (py3.9) install failed"
+
+# kube-hunter needs C headers for netifaces
+RUN apt-get update && apt-get install -y --no-install-recommends python3-dev gcc && \
+    /opt/cloud-tools/bin/pip install --no-cache-dir kube-hunter && \
+    apt-get remove -y python3-dev gcc && apt-get autoremove -y && rm -rf /var/lib/apt/lists/* \
+    || echo "kube-hunter install failed"
+
+# --- Go / Binary Tools (architecture-aware) ---
+# CloudFox
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then CLOUDFOX_ARCH="arm64"; else CLOUDFOX_ARCH="amd64"; fi && \
+    curl -sSL "https://github.com/BishopFox/cloudfox/releases/latest/download/cloudfox-linux-${CLOUDFOX_ARCH}.zip" \
+    -o /tmp/cloudfox.zip && unzip -o /tmp/cloudfox.zip -d /usr/local/bin/ && rm /tmp/cloudfox.zip \
+    || echo "CloudFox install skipped"
+
+# --- Container Security ---
+# Trivy (install script auto-detects arch)
+RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin \
+    || echo "Trivy install skipped"
+
+# CDK (Container penetration toolkit)
+RUN ARCH=$(dpkg --print-architecture) && \
+    if [ "$ARCH" = "arm64" ]; then CDK_ARCH="aarch64"; else CDK_ARCH="amd64"; fi && \
+    curl -sSL "https://github.com/cdk-team/CDK/releases/latest/download/cdk_linux_${CDK_ARCH}" \
+    -o /usr/local/bin/cdk && chmod +x /usr/local/bin/cdk \
+    || echo "CDK install skipped"
+
+# --- Kubernetes Security ---
+# kubectl (auto-detects arch)
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -LO "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/${ARCH}/kubectl" && \
+    chmod +x kubectl && mv kubectl /usr/local/bin/ \
+    || echo "kubectl install skipped"
+
+# kubeaudit
+RUN ARCH=$(dpkg --print-architecture) && \
+    KUBEAUDIT_VERSION=$(curl -s https://api.github.com/repos/Shopify/kubeaudit/releases/latest | grep tag_name | cut -d'"' -f4) && \
+    curl -sSL "https://github.com/Shopify/kubeaudit/releases/download/${KUBEAUDIT_VERSION}/kubeaudit_${KUBEAUDIT_VERSION#v}_linux_${ARCH}.tar.gz" \
+    | tar xz -C /usr/local/bin/ kubeaudit \
+    || echo "kubeaudit install skipped (may not have ${ARCH} release)"
+
+# rbac-lookup
+RUN ARCH=$(dpkg --print-architecture) && \
+    RBAC_VERSION=$(curl -s https://api.github.com/repos/FairwindsOps/rbac-lookup/releases/latest | grep tag_name | cut -d'"' -f4) && \
+    curl -sSL "https://github.com/FairwindsOps/rbac-lookup/releases/download/${RBAC_VERSION}/rbac-lookup_${RBAC_VERSION#v}_linux_${ARCH}.tar.gz" \
+    | tar xz -C /usr/local/bin/ rbac-lookup \
+    || echo "rbac-lookup install skipped (may not have ${ARCH} release)"
+
+# =============================================================================
+# IDENTITY RED TEAM TOOLING  (Active Directory + Entra ID + M365/O365)
+# =============================================================================
+# The identity surface (gated on `identity_targets` in scope.yml, exactly as the
+# cloud surface gates on `cloud_accounts`) needs three install tracks:
+#   1. A Python venv (/opt/identity-tools) for impacket/bloodhound/certipy/
+#      ROADtools/bloodyAD/o365spray — same model as /opt/cloud-tools above.
+#   2. PowerShell 7 (pwsh) + /opt/identity-ps for the PowerShell-only offensive
+#      modules (AADInternals, GraphRunner, TokenTactics, MFASweep, MSOLSpray).
+#   3. Standalone binaries (NetExec via pipx, kerbrute Go release).
+# Every tool uses the `|| echo "X install failed"` non-fatal pattern so one
+# missing tool never bricks the image, and a build-time `command -v` smoke check
+# (cheap) prints INSTALLED/NOT INSTALLED so a silently-absent tool is never later
+# mistaken for an auth failure (the cloud-build W1b de-mask lesson, applied up
+# front).
+
+# --- PowerShell 7 (required for AADInternals/GraphRunner/TokenTactics/MFASweep/MSOLSpray) ---
+RUN curl -sSL https://aka.ms/install-powershell.sh | bash \
+    || echo "pwsh install failed"
+RUN command -v pwsh >/dev/null 2>&1 && echo "pwsh: INSTALLED ($(pwsh -v 2>/dev/null))" || echo "pwsh: NOT INSTALLED"
+
+# --- Python identity tooling (isolated venv — same model as /opt/cloud-tools) ---
+# impacket (the AD swiss-army), bloodhound (bloodhound-python collector),
+# certipy-ad (ADCS ESC1-13), ldapdomaindump, ROADtools (roadrecon + roadtx for
+# Entra recon / token exchange / PRT), bloodyAD (lightweight AD privesc writes),
+# and o365spray (Entra/O365 user-enum + lockout-aware spray). Installed one per
+# layer so one failure doesn't block the rest (the /opt/cloud-tools pattern).
+RUN python3 -m venv /opt/identity-tools && \
+    /opt/identity-tools/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    || echo "identity-tools venv create failed"
+RUN /opt/identity-tools/bin/pip install --no-cache-dir impacket      || echo "impacket install failed"
+RUN /opt/identity-tools/bin/pip install --no-cache-dir bloodhound    || echo "bloodhound-python install failed"
+RUN /opt/identity-tools/bin/pip install --no-cache-dir certipy-ad    || echo "certipy-ad install failed"
+RUN /opt/identity-tools/bin/pip install --no-cache-dir ldapdomaindump || echo "ldapdomaindump install failed"
+RUN /opt/identity-tools/bin/pip install --no-cache-dir roadrecon     || echo "roadrecon install failed"
+RUN /opt/identity-tools/bin/pip install --no-cache-dir roadtx        || echo "roadtx install failed"
+RUN /opt/identity-tools/bin/pip install --no-cache-dir bloodyAD      || echo "bloodyAD install failed"
+RUN /opt/identity-tools/bin/pip install --no-cache-dir o365spray     || echo "o365spray install failed"
+
+# Symlink the venv entrypoints onto PATH (mirror the pmapper symlink pattern).
+# 2>/dev/null || true so a tool that failed to install above doesn't break the loop.
+RUN for b in GetUserSPNs.py GetNPUsers.py secretsdump.py ntlmrelayx.py getST.py \
+             dacledit.py owneredit.py rbcd.py getTGT.py certipy bloodhound-python \
+             ldapdomaindump roadrecon roadtx bloodyAD o365spray; do \
+        ln -sf "/opt/identity-tools/bin/$b" "/usr/local/bin/$b" 2>/dev/null || true; \
+    done
+
+# --- NetExec (crackmapexec successor — spray, LAPS read, SMB/LDAP enum) ---
+# pipx gives it its own venv (it has heavy/conflicting deps); fall back to a
+# break-system-packages pip if pipx isn't usable.
+RUN pipx install netexec || pip3 install --break-system-packages netexec || echo "netexec install failed"
+
+# --- kerbrute (Go binary — AS-REP enum + lockout-aware spray) ---
+RUN ARCH=$(dpkg --print-architecture) && \
+    curl -sSL "https://github.com/ropnop/kerbrute/releases/latest/download/kerbrute_linux_${ARCH}" \
+      -o /usr/local/bin/kerbrute && chmod +x /usr/local/bin/kerbrute \
+    || echo "kerbrute install skipped"
+
+# --- PowerShell-only offensive modules (cloned shallow; loaded under pwsh at runtime) ---
+#   AADInternals  — Golden SAML, PRT, immutableID, AD Connect sync abuse
+#   GraphRunner   — Graph/M365 mailbox/SharePoint/Teams + OAuth app inject
+#   TokenTactics  — device-code phishing + token manipulation
+#   MFASweep      — per-protocol MFA coverage check
+#   MSOLSpray     — Entra password spray (lockout-aware)
+# These are Windows-PowerShell modules but run on pwsh-7 under Linux for the
+# Graph/token-API surface (cross-platform .NET HTTP, not Windows-only WMI/AD
+# cmdlets). The handful of functions needing on-host Windows context (e.g. local
+# DPAPI PRT extraction) are flagged user-confirm / PARTIAL at agent runtime.
+RUN mkdir -p /opt/identity-ps && cd /opt/identity-ps && \
+    ( git clone --depth 1 https://github.com/Gerenios/AADInternals.git  || echo "AADInternals clone failed" ) && \
+    ( git clone --depth 1 https://github.com/dafthack/GraphRunner.git   || echo "GraphRunner clone failed" ) && \
+    ( git clone --depth 1 https://github.com/rvrsh3ll/TokenTactics.git   || echo "TokenTactics clone failed" ) && \
+    ( git clone --depth 1 https://github.com/dafthack/MFASweep.git       || echo "MFASweep clone failed" ) && \
+    ( git clone --depth 1 https://github.com/dafthack/MSOLSpray.git      || echo "MSOLSpray clone failed" )
+
+# --- Build-time smoke check (cheap; surfaces NOT-INSTALLED in build logs) ---
+RUN echo "=== Identity tooling smoke check ===" && \
+    for t in impacket-GetUserSPNs GetUserSPNs.py certipy bloodhound-python \
+             ldapdomaindump roadrecon roadtx bloodyAD o365spray nxc kerbrute pwsh; do \
+      if command -v "$t" >/dev/null 2>&1; then echo "$t: INSTALLED"; else echo "$t: NOT INSTALLED"; fi; \
+    done && \
+    for m in AADInternals GraphRunner TokenTactics MFASweep MSOLSpray; do \
+      if [ -d "/opt/identity-ps/$m" ]; then echo "$m: CLONED"; else echo "$m: NOT CLONED"; fi; \
+    done
+
+# =============================================================================
+# INTERACTIVE SHELL — for the Maestro desktop terminal pane
+# =============================================================================
+# The desktop app spawns its terminal pane inside this container (see
+# frontend/src-tauri/src/commands/terminal.rs). We install the Claude Code
+# CLI + a friendlier shell here so users get the same AI-copilot UX they
+# had on the host, but contained — host files are only reachable via the
+# /mnt/host-home bind mount, so `rm -rf ~` or accidental exfil blows up
+# inside the container, not the user's Mac.
+
+# Claude Code CLI (auth lives in /root/.claude, persisted via bind mount).
+# Pinned for reproducible image builds — an unpinned `npm install -g` grabs
+# whatever was latest at build time and then freezes (Docker layer caching
+# means this line won't even re-run unless busted), so the CLI silently
+# drifts stale. Bump deliberately alongside DEFAULT_CLAUDE_MODEL in
+# frontend/src-tauri/src/commands/credentials.rs. Note: the model the CLI
+# runs is pinned independently via the ANTHROPIC_MODEL env var (see that
+# constant), so this pin governs harness/UX, not which Opus we drive.
+#
+# WORKFLOW FLOOR: the `/assess` orchestration drives the assessment via the
+# built-in Workflow tool (.claude/workflows/maestro-assess-*.js). That tool was
+# confirmed present in 2.1.162; do NOT pin below it, or `/assess` falls back to
+# the slower Team protocol (set `orchestrator: team` in the profile if you must
+# run an older CLI). 2.1.152 is the "stable" tag but is unverified for Workflow.
+RUN npm install -g @anthropic-ai/claude-code@2.1.162
+
+# OpenAI Codex CLI — the parallel "brain" for users who pick GPT-5.5 instead
+# of Claude. Same MCP wire as Claude Code, different LLM. Auth lives in
+# /root/.codex (auth.json + config.toml), persisted via bind mount.
+RUN npm install -g @openai/codex
+
+# `uv` — the Python package runner used by Whiteout Defender hooks (and any
+# other PostToolUse / PreToolUse hooks the user configures via .claude/settings.json).
+# Without it the container floods every tool call with
+# "PostToolUse: Failed with non-blocking status code: /bin/sh: 1: uv: not found".
+# Installed from PyPI; Kali's pip places the binary inside a tools venv at
+# /opt/cloud-tools/bin/uv which is NOT on /bin/sh's default PATH, so the
+# hook command runs through `sh -c` and can't find it. Symlink onto
+# /usr/local/bin so plain `uv run …` resolves regardless of which shell
+# / PATH the hook fires under.
+RUN pip3 install --break-system-packages uv && \
+    (test -e /usr/local/bin/uv || \
+     ln -sf "$(command -v uv 2>/dev/null || echo /opt/cloud-tools/bin/uv)" /usr/local/bin/uv)
+
+# Same "/opt/cloud-tools/bin is not on /bin/sh's default PATH" problem as uv,
+# but for the cloud-security CLIs installed into that venv (scoutsuite -> `scout`,
+# prowler, pacu, s3scanner, kube-hunter, ...). The MCP server runs scanner
+# commands through `sh -c` with a PATH that does NOT include /opt/cloud-tools/bin,
+# so a bare `scout aws ...` resolved to "scout: not found" and CLOUD-01 was
+# force-BLOCKED even though ScoutSuite WAS installed. Symlink each tool's binary
+# onto /usr/local/bin so it resolves regardless of which shell/PATH the call
+# fires under. Tolerant loop -- a tool that failed to install is simply skipped.
+RUN for t in scout prowler pacu s3scanner kube-hunter cloud_enum cloudenum shodan detect-secrets; do \
+      if [ -e "/opt/cloud-tools/bin/$t" ]; then ln -sf "/opt/cloud-tools/bin/$t" "/usr/local/bin/$t"; fi; \
+    done
+
+# zsh for a nicer prompt + tmux so terminal panes can reattach across
+# Maestro app restarts (same UX as the host-side tmux sidecar we use today,
+# just inside the container).
+RUN apt-get update && apt-get install -y --no-install-recommends zsh tmux && rm -rf /var/lib/apt/lists/*
+
+# Ensure /root/.claude and /root/.codex exist as directories so the
+# bind-mount targets are valid on first `docker start` (Docker would
+# otherwise create them as files on the host side).
+RUN mkdir -p /root/.claude /root/.codex
+
+WORKDIR /opt/pentest
+
+COPY scripts/playwright-action.js /opt/pentest/scripts/playwright-action.js
+COPY scripts/md-to-pdf.js /opt/pentest/scripts/md-to-pdf.js
+# Shared PDF stylesheet. Read by md-to-pdf.js at runtime; also baked into
+# backend-rs at compile time (via include_str!). One source of truth for
+# both renderers — edit report-style.css once, both PDF paths pick it up.
+COPY scripts/report-style.css /opt/pentest/scripts/report-style.css
+COPY scripts/test-*.py scripts/test-*.js scripts/fuzz-api.py scripts/generate-waf-bypass.py scripts/subdomain-takeover.py /opt/pentest/scripts/
+COPY scripts/egress-init.sh /opt/pentest/scripts/egress-init.sh
+COPY scripts/egress-watchdog.sh /opt/pentest/scripts/egress-watchdog.sh
+COPY scripts/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh /opt/pentest/scripts/egress-init.sh /opt/pentest/scripts/egress-watchdog.sh
+
+# Make the globally-installed renderer deps resolvable from /opt/pentest/scripts
+# WITHOUT NODE_PATH, so `node md-to-pdf.js` works whether invoked by the MCP
+# tool (which sets NODE_PATH) OR directly. Before this, a direct invocation hit
+# "Cannot find module 'playwright'" — the lead then had to symlink it by hand
+# every run and the PDFs it rendered locally never cloud-uploaded. Bake the
+# symlinks in once so PDF rendering Just Works on a fresh container.
+RUN mkdir -p /opt/pentest/scripts/node_modules && \
+    for m in playwright playwright-core marked; do \
+      ln -sfn "$(npm root -g)/$m" "/opt/pentest/scripts/node_modules/$m"; \
+    done
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["tail", "-f", "/dev/null"]

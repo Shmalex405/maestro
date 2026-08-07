@@ -1,0 +1,123 @@
+name: LLM Assessment (Maestro proving run)
+
+# SKELETON / SCAFFOLD — not yet a trusted gate. See tests-e2e-assessment/run-llm.sh.
+#
+# This is the proving run for the ACTUAL PRODUCT: Maestro (Claude Code) orchestrating
+# the agent team against known-vulnerable targets, scored by the SAME assertions as
+# the deterministic harness (assert.mjs). It complements e2e-assessment.yml, which
+# proves the cheap deterministic engine + plumbing; this proves the LLM-orchestrated
+# flow itself.
+#
+# Why GitHub Actions: the ubuntu runners are native x86_64, so the amd64 Kali image
+# runs WITHOUT emulation (faster than a dev arm64 Mac). Scheduled, secrets-managed,
+# artifacts for the report.
+#
+# COST: unlike the deterministic harness ($0), this bills the Anthropic API per run
+# (~14M effective tokens for a full assessment). So it is MONTHLY + on-demand, never
+# per-PR. ANTHROPIC_API_KEY is a repo secret.
+#
+# OPEN SPIKE before this is a trusted gate: can `claude -p` (headless / print mode)
+# drive a full multi-agent assessment to completion unattended and land findings?
+# Our targets are token-auth (no interactive OTP), which removes the usual derail
+# risk — but this needs to be proven once before flipping on the schedule.
+
+on:
+  workflow_dispatch:
+    inputs:
+      model:
+        description: "Anthropic model id (defaults to the product's pinned Opus)"
+        required: false
+        default: "claude-opus-4-8"
+  # MONTHLY eval cadence. Enable the schedule ONLY after one manual workflow_dispatch
+  # produces a clean run — then uncomment the two `schedule:` lines below:
+  #   - a green `assert.mjs llm` (the proving run passed), AND
+  #   - a clean trace-report.json: integrity.consistent == true (no faked PASS),
+  #     deadEnds.degenerateRun == false (the agent team fanned out), AND the
+  #     agent-roster gate green (every required agent in expectations-llm.json ran).
+  # Until then this stays manual so a paid run is never fired automatically.
+  # schedule:
+  #   - cron: "0 7 1 * *" # 07:00 UTC on the 1st of each month
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: llm-assessment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llm-assessment:
+    name: Maestro proving run (Juice Shop + NodeGoat)
+    runs-on: ubuntu-latest
+    timeout-minutes: 120 # a full LLM assessment is 30–90 min
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mcp-server/package-lock.json
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.KALI_GHCR_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Run the Maestro proving assessment
+        env:
+          KALI_IMAGE: ${{ vars.KALI_IMAGE || 'ghcr.io/shmalex405/docker-kali:latest' }}
+          JUICE_SHOP_IMAGE: ${{ vars.JUICE_SHOP_IMAGE || 'bkimminich/juice-shop:latest' }}
+          NODEGOAT_COMMIT: ${{ vars.NODEGOAT_COMMIT || 'master' }}
+          # The product config uses a BYO API key. Simplest in CI = API key.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ inputs.model }}
+        run: ./tests-e2e-assessment/run-llm.sh
+
+      # The deterministic trace report is the at-a-glance "what did the run do"
+      # summary — surface its verdict in the job summary even on failure.
+      - name: Trace summary
+        if: always()
+        run: |
+          TR=/tmp/llm-assessment-debug/trace-report.json
+          if [ -f "$TR" ]; then
+            node -e '
+              const r=require(process.argv[1]);
+              const l=(s)=>console.log(s);
+              l("## Maestro trace report — `"+r.executionId+"`");
+              l("");
+              l("- verdict: **"+r.success.verdict+"** (ok="+r.success.ok+")");
+              l("- subagent spawns: "+r.counts.subagentSpawns+(r.deadEnds&&r.deadEnds.degenerateRun?" ⚠️ DEGENERATE":""));
+              l("- tools: "+r.counts.toolExecutions+" calls, "+r.counts.distinctTools+" distinct, "+r.counts.errors+" errors");
+              l("- findings: "+r.findingsTotal+"  | coverage: "+r.testRollup.pass+" pass / "+r.testRollup.fail+" fail / "+r.testRollup.blocked+" blocked");
+              l("- integrity: "+(r.integrity.consistent?"✅ consistent":("❌ "+r.integrity.fakedPass.length+" FAKED PASS: "+r.integrity.fakedPass.map(f=>f.testId).join(", "))));
+              l("- tokens: "+r.tokens.totalTokens.toLocaleString());
+            ' "$TR" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No trace-report.json was produced." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # The full debug bundle: stream log, on-disk transcripts (incl. subagents/),
+      # per-agent checkpoints, result.json, provenance.json, trace-report.json.
+      - name: Upload assessment artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: llm-assessment-${{ github.run_id }}
+          path: |
+            /tmp/llm-assessment-debug/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # A small, separate, easy-to-grab artifact: just the ExecutionOverview.
+      - name: Upload trace report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trace-report-${{ github.run_id }}
+          path: /tmp/llm-assessment-debug/trace-report.json
+          if-no-files-found: ignore
+          retention-days: 90

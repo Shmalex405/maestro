@@ -1,0 +1,81 @@
+name: E2E Assessment
+
+# End-to-end proof that a full assessment runs and does its job against
+# known-vulnerable targets (OWASP Juice Shop + NodeGoat), authenticated, with the
+# tool-provenance gate active. See tests-e2e-assessment/README.md.
+#
+# Heavy (a real multi-minute scan) + free-target-driven, so NOT on every PR. It runs:
+#   - monthly (the 1st, 08:00 UTC) — full-functionality health check
+#   - on every functionality release (a v* tag) — validates the released code
+#   - on demand (workflow_dispatch)
+# GitHub's ubuntu runners are native x86_64, so the amd64 Kali image runs WITHOUT
+# emulation (faster + more reliable than a dev arm64 Mac).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 8 1 * *" # 08:00 UTC on the 1st of each month
+  push:
+    tags:
+      - "v*" # every functionality release
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: e2e-assessment-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-assessment:
+    name: E2E Assessment (Juice Shop + NodeGoat)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # The Kali image is multi-GB (full Kali + cloud + identity toolsets); the
+      # default runner (~14GB free) runs out of disk pulling it. Reclaim the big
+      # preinstalled toolchains we don't need (~25GB).
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+                      /opt/hostedtoolcache/CodeQL /usr/local/.ghcup /usr/lib/jvm || true
+          sudo docker image prune -af || true
+          df -h /
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mcp-server/package-lock.json
+
+      # The Kali image is private on GHCR — log in so the harness can pull it.
+      # KALI_GHCR_PAT: a classic PAT with read:packages (same one the desktop app
+      # brokers). Falls back to the default token for same-org public images.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.KALI_GHCR_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Run the assessment harness
+        env:
+          # Pin these to a digest/tag per release for full determinism.
+          KALI_IMAGE: ${{ vars.KALI_IMAGE || 'ghcr.io/shmalex405/docker-kali:latest' }}
+          JUICE_SHOP_IMAGE: ${{ vars.JUICE_SHOP_IMAGE || 'bkimminich/juice-shop:latest' }}
+          NODEGOAT_COMMIT: ${{ vars.NODEGOAT_COMMIT || 'master' }}
+        run: ./tests-e2e-assessment/run.sh
+
+      # run.sh tears itself down; capture any artifacts it left for debugging.
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-assessment-debug
+          path: |
+            /tmp/e2e-assessment-debug/**
+          if-no-files-found: ignore
+          retention-days: 7

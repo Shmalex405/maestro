@@ -1,0 +1,22 @@
+{
+  "name": "maestro-e2e-desktop",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Desktop end-to-end tests for Maestro, driven by tauri-driver via WebdriverIO. Linux-only — runs in CI; macOS devs use the in-process Vitest suite + manual checklist.",
+  "scripts": {
+    "test": "wdio run wdio.conf.ts",
+    "test:headed": "HEADED=1 wdio run wdio.conf.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@wdio/cli": "^9.2.0",
+    "@wdio/local-runner": "^9.2.0",
+    "@wdio/mocha-framework": "^9.2.0",
+    "@wdio/spec-reporter": "^9.2.0",
+    "@wdio/types": "^9.2.0",
+    "ts-node": "^10.9.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0",
+    "webdriverio": "^9.2.0"
+  }
+}

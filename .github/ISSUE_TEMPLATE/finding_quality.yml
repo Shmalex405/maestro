@@ -1,0 +1,41 @@
+name: False positive / false negative
+description: A finding is wrong, or a real issue was missed
+labels: [finding-quality]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Finding quality is the product, so these reports matter more than most.
+        Both directions are worth filing — a false positive wastes triage time, and
+        a missed vulnerability is worse.
+
+        **Scrub target details before posting**, or send it privately to
+        <security@groovysec.com>.
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Which kind?
+      options:
+        - False positive — reported something that is not real
+        - False negative — missed something that is real
+        - Wrong severity
+    validations:
+      required: true
+  - type: input
+    id: test_id
+    attributes:
+      label: Test ID or finding title
+      description: From the report or the coverage checklist, e.g. INJ-03
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should it have concluded, and why?
+    validations:
+      required: true
+  - type: textarea
+    id: target
+    attributes:
+      label: Target shape
+      description: >-
+        Framework, auth type, surface — enough to reproduce without naming a real
+        system. If it reproduces against Juice Shop or NodeGoat, say so.

@@ -1,0 +1,89 @@
+# =============================================================================
+# Maestro Self-Host — example configuration
+# =============================================================================
+#
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Four values are required. Everything else has a working default.
+# =============================================================================
+
+# ── Required ─────────────────────────────────────────────────────────────────
+
+# Your backend's fully-qualified domain. Yours, in your zone.
+api_domain = "maestro.security.example.com"
+
+# Route 53 hosted zone authoritative for the name above, in THIS account.
+# Find it with:
+#   aws route53 list-hosted-zones-by-name --dns-name example.com \
+#     --query 'HostedZones[0].Id' --output text
+route53_zone_id = "Z1234567890ABC"
+
+# Backend image you built and pushed. Same-account ECR is simplest:
+#   aws ecr create-repository --repository-name maestro-backend
+#   docker build -t maestro-backend backend-rs/
+#   docker tag maestro-backend:latest <acct>.dkr.ecr.us-west-2.amazonaws.com/maestro-backend:1.12.0
+#   aws ecr get-login-password | docker login --username AWS --password-stdin <acct>.dkr.ecr.us-west-2.amazonaws.com
+#   docker push <acct>.dkr.ecr.us-west-2.amazonaws.com/maestro-backend:1.12.0
+container_image = "123456789012.dkr.ecr.us-west-2.amazonaws.com/maestro-backend:1.12.0"
+
+# First admin. Cognito emails a temporary password here, so use a real address.
+admin_email = "security-admin@example.com"
+
+# ── Identity ─────────────────────────────────────────────────────────────────
+
+org_id   = "self-hosted"
+org_name = "Example Corp Security"
+
+# Optional: SES verified identity for Cognito email. Empty uses Cognito's
+# built-in sender (50 messages/day, generic From address) — fine for a team.
+# ses_email_arn = "arn:aws:ses:us-west-2:123456789012:identity/example.com"
+
+# ── AWS ──────────────────────────────────────────────────────────────────────
+
+aws_region  = "us-west-2"
+environment = "prod"
+
+# Named profile for local runs. Leave empty in CI.
+# aws_profile = "my-sso-profile"
+
+# ── Networking ───────────────────────────────────────────────────────────────
+
+# Default creates a dedicated VPC. To use an existing one, set create_vpc = false
+# and supply all three ID lists. Public and private subnets must each span 2+ AZs
+# — the ALB and the RDS subnet group both require it.
+create_vpc = true
+vpc_cidr   = "10.50.0.0/16"
+
+# create_vpc                  = false
+# existing_vpc_id             = "vpc-0123456789abcdef0"
+# existing_public_subnet_ids  = ["subnet-aaa", "subnet-bbb"]
+# existing_private_subnet_ids = ["subnet-ccc", "subnet-ddd"]
+
+# ── Sizing ───────────────────────────────────────────────────────────────────
+
+# ~$55/month at these settings. Drop ecs_desired_count to 1 to save ~$15 at the
+# cost of HA; raise db_instance_class before you raise CPU — findings-heavy
+# assessments are database-bound, not compute-bound.
+db_instance_class = "db.t3.small"
+ecs_cpu           = 512
+ecs_memory        = 1024
+ecs_desired_count = 2
+
+# ── Cloud assessments (optional) ─────────────────────────────────────────────
+
+# Read-only role the backend brokers via POST /cloud/assume. It must trust this
+# deployment's `task_role_arn` output, so it is a two-pass setup: apply once,
+# create the role trusting the output, then set this and apply again.
+# assessment_role_arn = "arn:aws:iam::123456789012:role/MaestroSecurityAudit"
+
+# ── Blind-vulnerability verification (optional) ──────────────────────────────
+
+# There is no shared listener when self-hosting. Off means the `oast` oracle
+# reports oast_unavailable and blind findings (blind SSRF/SQLi/XXE/SSTI) stay
+# honest unverified candidates rather than being guessed at.
+#
+# Enabling it needs a delegatable domain and a manual NS + glue hand-off in the
+# parent zone after apply. Adds roughly $8/month.
+oast_enabled = false
+# oast_domain             = "oast.security.example.com"
+# oast_acme_contact_email = "security-admin@example.com"

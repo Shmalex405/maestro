@@ -1,0 +1,59 @@
+{
+  "_comment": "Ground-truth must-find checklist. Each entry matches a finding when ALL of its `match` substrings appear (case-insensitive) across the finding's title+description+source. `required:true` entries HARD-FAIL the harness if unmatched (no false negatives); `required:false` are informational (printed found/not-found) — used where the deterministic tool output is real but less guaranteed, so version drift doesn't break the gate. Calibrated conservatively because the harness must be reliable on first run; tighten (flip false→true) once a live run confirms a finding is consistently produced.",
+
+  "minimums": {
+    "_comment": "Coarse 'it actually found things' floor. from_dast_required is FALSE for now: the deterministic engine's DAST scanners run but their output isn't extracted (Tier 1.1 backlog) — the harness reports it as a loud warning rather than failing the gate, since this is the secondary/continuous engine, not the LLM-orchestrated product. Flip to true once DAST extraction is fixed.",
+    "total_findings": 3,
+    "from_dast_source": 1,
+    "from_dast_required": true,
+    "from_sast_source": 1
+  },
+
+  "dast_sources": ["run_nuclei", "run_nikto", "run_sqlmap", "test_cors", "test_xss", "test_idor", "web_technology_scan", "fuzz_endpoints", "test_session_management", "analyze_jwt", "test_token_replay", "test_ssrf", "test_ssti", "scan_ports"],
+  "sast_sources": ["scan_semgrep", "scan_njsscan", "scan_bandit", "scan_secrets", "scan_dependencies", "scan_iac"],
+
+  "unauth": [
+    {
+      "id": "juiceshop-missing-security-headers",
+      "required": true,
+      "match": ["header"],
+      "note": "Juice Shop ships without a proper CSP / security headers — reliably surfaced by header/CORS checks."
+    },
+    {
+      "id": "juiceshop-version-or-tech-disclosure",
+      "required": false,
+      "match": ["juice"],
+      "note": "Tech/version fingerprint of the Juice Shop app."
+    },
+    {
+      "id": "juiceshop-injection",
+      "required": false,
+      "match": ["injection"],
+      "note": "SQL/NoSQL injection — deterministic injection coverage is partial, so informational."
+    }
+  ],
+
+  "authed": [
+    {
+      "id": "juiceshop-idor-or-broken-access",
+      "required": false,
+      "match": ["idor"],
+      "note": "Authorization/IDOR finding — proves the authed AUTHZ tests produced a result. Informational until a live run confirms the exact title."
+    }
+  ],
+
+  "sast": [
+    {
+      "id": "nodegoat-code-vuln",
+      "required": true,
+      "match_any_source": ["semgrep", "njsscan", "scan_semgrep"],
+      "note": "NodeGoat is deliberately vulnerable (injection, weak crypto, etc.) — a SAST scanner MUST produce at least one finding against it."
+    },
+    {
+      "id": "nodegoat-secret-or-dependency",
+      "required": false,
+      "match_any_source": ["gitleaks", "scan_secrets", "scan_dependencies", "grype"],
+      "note": "Hardcoded secret / vulnerable dependency in NodeGoat."
+    }
+  ]
+}

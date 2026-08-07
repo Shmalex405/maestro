@@ -1,0 +1,696 @@
+/* ========== CSS Custom Properties (Color System) ========== */
+:root {
+  --color-critical: #dc3545;
+  --color-critical-bg: #fff5f5;
+  --color-critical-border: #f5c6cb;
+  --color-high: #fd7e14;
+  --color-high-bg: #fff8f0;
+  --color-high-border: #fde2c8;
+  --color-medium: #ffc107;
+  --color-medium-text: #856404;
+  --color-medium-bg: #fffdf0;
+  --color-medium-border: #ffeeba;
+  --color-low: #28a745;
+  --color-low-bg: #f0fff4;
+  --color-low-border: #c3e6cb;
+  --color-info: #17a2b8;
+  --color-info-bg: #f0faff;
+  --color-info-border: #bee5eb;
+
+  --color-pass: #28a745;
+  --color-fail: #dc3545;
+  --color-exposed: #dc3545;
+  --color-not-exposable: #28a745;
+  --color-not-exploitable: #28a745;
+  --color-confirmed: #dc3545;
+  --color-mitigated: #fd7e14;
+  --color-inconclusive: #6c757d;
+  --color-skipped: #6c757d;
+  --color-na: #adb5bd;
+  --color-yes: #28a745;
+  --color-no: #6c757d;
+
+  --color-navy: #1a1a2e;
+  --color-dark: #2d2d4e;
+  --color-muted: #4a4a6a;
+  --color-border: #e0e0e0;
+  --color-bg-stripe: #f8f9fa;
+}
+
+/* ========== Base ========== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 10.5pt;
+  line-height: 1.65;
+  color: var(--color-navy);
+  padding: 0 10px;
+}
+
+/* ========== Cover Page ========== */
+.cover-page {
+  text-align: center;
+  padding: 80px 40px 40px;
+  min-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  page-break-after: always;
+}
+
+.cover-page h1 {
+  font-size: 28pt;
+  color: var(--color-navy);
+  border-bottom: 4px solid var(--color-navy);
+  padding-bottom: 16px;
+  margin: 0 0 24px 0;
+  letter-spacing: -0.5px;
+}
+
+.cover-page p {
+  font-size: 12pt;
+  color: var(--color-muted);
+  margin: 4px 0;
+}
+
+.cover-page hr {
+  display: none;
+}
+
+/* Classification banner */
+.classification-banner {
+  display: inline-block;
+  background: var(--color-critical);
+  color: #fff;
+  padding: 4px 20px;
+  border-radius: 4px;
+  font-size: 11pt;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin: 16px 0;
+}
+
+/* ========== Headings ========== */
+h1 {
+  font-size: 22pt;
+  color: var(--color-navy);
+  border-bottom: 3px solid var(--color-navy);
+  padding-bottom: 8px;
+  margin: 30px 0 14px 0;
+  page-break-after: avoid;
+}
+
+h2 {
+  font-size: 16pt;
+  color: var(--color-navy);
+  border-bottom: 2px solid var(--color-dark);
+  padding-bottom: 6px;
+  margin: 28px 0 12px 0;
+  page-break-after: avoid;
+}
+
+h2.page-break-section {
+  page-break-before: always;
+}
+
+/* Don't break before first h2 after cover */
+.cover-page + h2.page-break-section {
+  page-break-before: avoid;
+}
+
+h3 {
+  font-size: 13pt;
+  color: var(--color-dark);
+  margin: 20px 0 8px 0;
+  page-break-after: avoid;
+}
+
+h4 {
+  font-size: 11pt;
+  color: var(--color-muted);
+  margin: 14px 0 6px 0;
+  page-break-after: avoid;
+}
+
+/* ── Section heading accents ── */
+.section-critical-high {
+  border-bottom-color: var(--color-critical);
+}
+.section-critical-high::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  background: var(--color-critical);
+  border-radius: 2px;
+  margin-right: 8px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+.section-medium::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  background: var(--color-medium);
+  border-radius: 2px;
+  margin-right: 8px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+.section-low-info::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  background: var(--color-low);
+  border-radius: 2px;
+  margin-right: 8px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+.section-exploitation {
+  border-bottom-color: var(--color-high);
+}
+
+.section-qa {
+  border-bottom-color: var(--color-info);
+}
+
+.section-recommendations {
+  border-bottom-color: var(--color-low);
+}
+
+.section-coverage {
+  border-bottom-color: var(--color-info);
+}
+
+.section-compliance {
+  border-bottom-color: #6f42c1;
+}
+
+.section-methodology {
+  border-bottom-color: var(--color-muted);
+}
+
+.section-toc {
+  border-bottom-color: var(--color-navy);
+}
+
+.section-dast {
+  border-bottom-color: var(--color-high);
+}
+.section-dast::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  background: var(--color-high);
+  border-radius: 2px;
+  margin-right: 8px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+.section-sast::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  background: var(--color-info);
+  border-radius: 2px;
+  margin-right: 8px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+.section-cross-validated {
+  border-bottom-color: #6f42c1;
+}
+.section-cross-validated::before {
+  content: '';
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  background: #6f42c1;
+  border-radius: 2px;
+  margin-right: 8px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+/* ========== Finding headings ========== */
+h3.finding-heading {
+  border-left: 5px solid var(--color-info);
+  padding-left: 12px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  margin-top: 30px;
+  background: var(--color-info-bg);
+  border-radius: 0 4px 4px 0;
+}
+
+h3.finding-heading-critical {
+  border-left-color: var(--color-critical);
+  background: var(--color-critical-bg);
+}
+
+h3.finding-heading-high {
+  border-left-color: var(--color-high);
+  background: var(--color-high-bg);
+}
+
+h3.finding-heading-medium {
+  border-left-color: var(--color-medium);
+  background: var(--color-medium-bg);
+}
+
+h3.finding-heading-low {
+  border-left-color: var(--color-low);
+  background: var(--color-low-bg);
+}
+
+h3.finding-heading-info {
+  border-left-color: var(--color-info);
+  background: var(--color-info-bg);
+}
+
+/* ========== Paragraphs & Links ========== */
+p { margin: 0 0 10px 0; }
+a { color: #2563eb; text-decoration: none; }
+
+/* ========== Horizontal rules (finding separators) ========== */
+hr.finding-separator {
+  border: none;
+  border-top: 2px dashed var(--color-border);
+  margin: 28px 0;
+}
+
+/* ========== Lists ========== */
+ul, ol {
+  margin: 6px 0 12px 24px;
+}
+li { margin: 3px 0; }
+ul ul { margin: 2px 0 2px 20px; }
+
+/* ========== Tables ========== */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0 18px 0;
+  font-size: 9.5pt;
+  page-break-inside: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+}
+
+th {
+  background: var(--color-navy);
+  color: #fff;
+  font-weight: 600;
+  padding: 7px 10px;
+  text-align: left;
+  white-space: nowrap;
+  font-size: 9pt;
+}
+
+td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border);
+  vertical-align: top;
+}
+
+tr:nth-child(even) td {
+  background: var(--color-bg-stripe);
+}
+
+tr { page-break-inside: avoid; }
+
+/* ── Severity cells ── */
+td[data-severity="critical"] {
+  color: var(--color-critical);
+  font-weight: 700;
+}
+td[data-severity="critical"]::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--color-critical);
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+td[data-severity="high"] {
+  color: var(--color-high);
+  font-weight: 700;
+}
+td[data-severity="high"]::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--color-high);
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+td[data-severity="medium"] {
+  color: var(--color-medium-text);
+  font-weight: 700;
+}
+td[data-severity="medium"]::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--color-medium);
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+td[data-severity="low"] {
+  color: var(--color-low);
+  font-weight: 600;
+}
+td[data-severity="low"]::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--color-low);
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+td[data-severity="info"] {
+  color: var(--color-info);
+  font-weight: 600;
+}
+td[data-severity="info"]::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: var(--color-info);
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+/* ── Status cells ── */
+td[data-status="pass"] {
+  color: var(--color-pass);
+  font-weight: 600;
+}
+
+td[data-status="fail"] {
+  color: var(--color-fail);
+  font-weight: 700;
+  background: #fff5f5 !important;
+}
+
+td[data-status="exposed"],
+td[data-status="confirmed"] {
+  color: #fff;
+  font-weight: 700;
+  background: var(--color-exposed) !important;
+  border-radius: 2px;
+}
+
+td[data-status="not-exposable"],
+td[data-status="not-exploitable"] {
+  color: var(--color-not-exposable);
+  font-weight: 600;
+}
+
+td[data-status="mitigated"] {
+  color: var(--color-mitigated);
+  font-weight: 600;
+}
+
+td[data-status="skipped"],
+td[data-status="inconclusive"] {
+  color: var(--color-skipped);
+  font-weight: 600;
+  font-style: italic;
+}
+
+td[data-status="na"] {
+  color: var(--color-na);
+  font-weight: 400;
+}
+
+td[data-status="yes"] {
+  color: var(--color-yes);
+  font-weight: 700;
+}
+
+td[data-status="no"] {
+  color: var(--color-no);
+  font-weight: 600;
+}
+
+/* ── Exploitability cells (finding metadata table) ── */
+td[data-status="exploitable-true"] {
+  color: #fff;
+  font-weight: 700;
+  background: var(--color-critical) !important;
+  border-radius: 2px;
+}
+
+td[data-status="exploitable-false"] {
+  color: var(--color-pass);
+  font-weight: 700;
+}
+
+td[data-status="exploitable-potentially"] {
+  color: var(--color-high);
+  font-weight: 700;
+}
+
+td[data-status="blocked"] {
+  color: var(--color-skipped);
+  font-weight: 600;
+  font-style: italic;
+}
+
+/* ========== Severity badges (inline bold) ========== */
+.severity-badge {
+  display: inline-block;
+  padding: 1px 10px;
+  border-radius: 12px;
+  font-size: 9pt;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.severity-critical {
+  background: var(--color-critical);
+  color: #fff;
+}
+
+.severity-high {
+  background: var(--color-high);
+  color: #fff;
+}
+
+.severity-medium {
+  background: var(--color-medium);
+  color: var(--color-medium-text);
+}
+
+.severity-low {
+  background: var(--color-low);
+  color: #fff;
+}
+
+.severity-info {
+  background: var(--color-info);
+  color: #fff;
+}
+
+/* ========== Status badges (inline bold) ========== */
+.status-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 8.5pt;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.status-pass {
+  background: #e6f4ea;
+  color: var(--color-pass);
+}
+
+.status-fail {
+  background: #fce8e8;
+  color: var(--color-fail);
+}
+
+.status-exposed,
+.status-confirmed {
+  background: var(--color-exposed);
+  color: #fff;
+}
+
+.status-not-exposable,
+.status-not-exploitable {
+  background: #e6f4ea;
+  color: var(--color-not-exposable);
+}
+
+.status-mitigated {
+  background: #fff3e0;
+  color: var(--color-mitigated);
+}
+
+.status-skipped,
+.status-inconclusive {
+  background: #f0f0f0;
+  color: var(--color-skipped);
+}
+
+.status-na {
+  background: #f5f5f5;
+  color: var(--color-na);
+}
+
+.status-yes {
+  background: #e6f4ea;
+  color: var(--color-yes);
+}
+
+.status-no {
+  background: #f0f0f0;
+  color: var(--color-no);
+}
+
+/* Oracle verdicts — the evidence tier behind a finding, distinct from its
+   severity. VERIFIED gets its own colour (not reused from severity) so a reader
+   never confuses "how bad" with "how sure". */
+.status-verified {
+  background: #4c2889;
+  color: #fff;
+}
+
+.status-candidate {
+  background: #fff3e0;
+  color: #8a5a00;
+}
+
+.status-refuted {
+  background: #f0f0f0;
+  color: var(--color-skipped);
+}
+
+.status-exploitable-true {
+  background: var(--color-critical);
+  color: #fff;
+}
+
+.status-exploitable-false {
+  background: #e6f4ea;
+  color: var(--color-pass);
+}
+
+.status-exploitable-potentially {
+  background: var(--color-high-bg);
+  color: var(--color-high);
+}
+
+.status-blocked {
+  background: #f0f0f0;
+  color: var(--color-skipped);
+  font-style: italic;
+}
+
+/* ========== Code blocks ========== */
+pre {
+  background: #f8f8f5;
+  border: 1px solid #ddd;
+  border-left: 4px solid var(--color-navy);
+  border-radius: 4px;
+  padding: 10px 14px;
+  margin: 8px 0 14px 0;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 8.5pt;
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  page-break-inside: avoid;
+}
+
+code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 9pt;
+  background: #f0f0eb;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 8.5pt;
+}
+
+/* ========== Blockquotes ========== */
+blockquote {
+  border-left: 3px solid #2563eb;
+  padding: 8px 16px;
+  margin: 10px 0;
+  background: #f0f4ff;
+  color: #333;
+  border-radius: 0 4px 4px 0;
+}
+
+/* ========== Bold (non-badge) ========== */
+strong {
+  color: var(--color-navy);
+}
+
+/* ========== Report footer ========== */
+em:last-of-type {
+  display: block;
+  text-align: center;
+  color: #888;
+  font-size: 9pt;
+  margin-top: 30px;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* ========== Print / PDF ========== */
+@media print {
+  body { font-size: 10pt; }
+  h2 { page-break-after: avoid; }
+  h3 { page-break-after: avoid; }
+  h3.finding-heading { page-break-inside: avoid; }
+  pre { page-break-inside: avoid; }
+  table { page-break-inside: auto; }
+  tr { page-break-inside: avoid; }
+  .cover-page { page-break-after: always; }
+  h2.page-break-section { page-break-before: always; }
+}

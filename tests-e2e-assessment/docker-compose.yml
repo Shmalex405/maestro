@@ -1,0 +1,60 @@
+# End-to-end assessment harness topology.
+#
+#   juice-shop  — OWASP Juice Shop, the known-vulnerable WEB target (DAST).
+#   kali        — the real Kali toolbox + MCP server (autonomous-runner on :3001).
+#
+# The kali image ships the scanners (nmap/nuclei/sqlmap/semgrep/...) and a working
+# /opt/pentest/mcp-server with node_modules. run.sh overlays the working-tree dist
+# (docker cp) and starts the autonomous-runner, so the harness tests THIS version's
+# MCP code against real tools — not the image's baked-in dist.
+#
+# Images are env-overridable + meant to be PINNED in CI (tag or digest) for
+# determinism. NodeGoat (the SAST target) is checked out by run.sh into ./.nodegoat
+# and mounted read-only.
+
+services:
+  juice-shop:
+    image: ${JUICE_SHOP_IMAGE:-bkimminich/juice-shop:latest}
+    hostname: juice-shop
+    networks: [harness-net]
+    ports:
+      - "${JUICE_PORT:-3000}:3000" # published so provision-creds.mjs can reach it from the host
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/',r=>process.exit(r.statusCode<500?0:1)).on('error',()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
+
+  kali:
+    image: ${KALI_IMAGE:-ghcr.io/shmalex405/docker-kali:latest}
+    # Parameterized so the harness can coexist with a running desktop app
+    # (which uses container name kali-pentest + port 3001) instead of colliding.
+    platform: linux/amd64                                    # amd64-only image; run emulated on arm64
+    container_name: ${KALI_CONTAINER:-kali-pentest-e2e}
+    hostname: kali-pentest
+    networks: [harness-net]
+    ports:
+      - "${MCP_PORT:-3001}:3001" # MCP autonomous-runner HTTP — the driver POSTs here
+    volumes:
+      - ./scope.yml:/harness/scope.yml:ro                       # in-scope allowlist for the targets
+      - ./.nodegoat:/harness/nodegoat:ro                        # known-vulnerable SAST repo (run.sh clones)
+      - ../config/test-matrix.yml:/harness/test-matrix.yml:ro   # the gate needs this to map test→tool→binary
+    cap_add: [NET_ADMIN, NET_RAW]
+    security_opt: [seccomp:unconfined]
+    environment:
+      - SCOPE_CONFIG_PATH=/harness/scope.yml
+      - TEST_MATRIX_PATH=/harness/test-matrix.yml
+      - DB_PATH=/tmp/assess.db
+      - AUTONOMOUS_PORT=3001
+      # Deterministic mode never calls the LLM; a dummy key keeps startup happy.
+      - ANTHROPIC_API_KEY=harness-not-used
+    # Don't hard-gate on the healthcheck (juice-shop's first boot can exceed the
+    # budget under load); run.sh + provision-creds.mjs do their own readiness wait.
+    depends_on:
+      juice-shop:
+        condition: service_started
+
+networks:
+  harness-net:
+    driver: bridge

@@ -1,0 +1,67 @@
+[package]
+name = "maestro"
+version = "0.1.102"
+description = "Maestro - Enterprise Automated Ethical Hacking Platform by Groovy Security"
+authors = ["Security Team"]
+license = "Apache-2.0"
+repository = ""
+edition = "2021"
+
+[[bin]]
+name = "Maestro"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["full"] }
+bollard = "0.18"  # Docker API client
+urlencoding = "2"  # percent-encoding for cloud probe POST bodies
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+thiserror = "2"
+anyhow = "1"
+futures = "0.3"
+futures-util = "0.3"
+async-stream = "0.3"
+directories = "5"
+dirs = "5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"  # rolling file sink for ~/Library/Logs/Maestro
+parking_lot = "0.12"  # For thread-safe database access
+regex = "1"  # For text-based tool call extraction fallback
+tauri-plugin-pty = "0.2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-deep-link = "2"  # custom-scheme capture for browser OAuth sign-in
+# `deep-link` feature forwards a second-instance launch URL (Windows/Linux) into
+# the deep-link plugin so onOpenUrl fires in the already-running app.
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-opener = "2"  # open the Hosted UI authorize/logout URL in the system browser
+which = "7"
+include_dir = "0.7"  # Embed .claude/ at compile time so Help page works on customer machines
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+maestro-types = { path = "../../crates/maestro-types" }
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"

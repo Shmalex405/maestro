@@ -1,0 +1,58 @@
+# Parity soak stack. Brings up Postgres + both backends side-by-side so the
+# harness can hit them with identical traffic and diff responses.
+#
+# This compose file is local-dev only — it is not shipped to customers.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pentest
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend-py:
+    # The existing Python backend image pulled from ECR, or a local build
+    # from backend/Dockerfile if you prefer.
+    build:
+      context: ../../../backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/pentest
+      AUTH_PROVIDER: local
+      JWT_SECRET: parity-test-secret
+      JWT_ALGORITHM: HS256
+      DEBUG: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8100:8000"
+
+  backend-rs:
+    build:
+      context: ../../../
+      dockerfile: backend-rs/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/pentest
+      AUTH_PROVIDER: local
+      JWT_SECRET: parity-test-secret
+      JWT_ALGORITHM: HS256
+      DEBUG: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend-py:
+        # Let the Python backend run its `Base.metadata.create_all` first so
+        # both backends see the same schema. sqlx migrations are idempotent
+        # (CREATE TABLE IF NOT EXISTS) so it doesn't matter who wins.
+        condition: service_started
+    ports:
+      - "8101:8000"

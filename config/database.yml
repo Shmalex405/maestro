@@ -1,0 +1,33 @@
+# Database Configuration
+#
+# Shared database configuration for MCP server and Tauri frontend.
+# Both components read from the same SQLite database to ensure
+# findings from MCP tools appear in the frontend.
+#
+# Environment variable override: DB_PATH
+#
+# Path resolution order:
+# 1. DB_PATH environment variable (if set)
+# 2. This config file path (if specified)
+# 3. Default: ~/.pentest/data/pentest.db
+
+# Database file path
+# Use ~ for home directory, will be expanded automatically
+# Examples:
+#   - ~/.pentest/data/pentest.db (default, recommended)
+#   - /var/lib/pentest/pentest.db (system-wide)
+#   - ./data/pentest.db (relative to project, for development)
+path: ~/.pentest/data/pentest.db
+
+# SQLite settings
+sqlite:
+  # Journal mode: DELETE, TRUNCATE, PERSIST, MEMORY, WAL, OFF
+  # WAL recommended for concurrent access from MCP and Tauri
+  journal_mode: WAL
+
+  # Busy timeout in milliseconds
+  # How long to wait when database is locked
+  busy_timeout: 5000
+
+  # Enable foreign keys
+  foreign_keys: true

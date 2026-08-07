@@ -1,0 +1,143 @@
+name: Deploy Maestro Web
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - prod
+          - staging
+        default: prod
+  # Auto-deploy on push is disabled until the platform/ terraform module is
+  # applied (creates the ECR repo + ECS cluster this workflow targets).
+  # Re-enable by uncommenting the `push:` block below.
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - "frontend/**"
+  #     - ".github/workflows/deploy-web.yml"
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPOSITORY: maestro-frontend-prod
+  ECS_CLUSTER: maestro-frontend-prod
+  ECS_SERVICE: maestro-frontend-prod
+  FRONTEND_DIR: frontend
+
+permissions:
+  contents: read
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════
+  #  Build & push Docker image to ECR
+  # ═══════════════════════════════════════════════════════════════
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image
+        id: build
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: |
+          IMAGE="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          IMAGE_LATEST="${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+
+          docker build \
+            -f Dockerfile.web \
+            -t "${IMAGE}" \
+            -t "${IMAGE_LATEST}" \
+            .
+
+          docker push "${IMAGE}"
+          docker push "${IMAGE_LATEST}"
+
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "Pushed: ${IMAGE}"
+
+  # ═══════════════════════════════════════════════════════════════
+  #  Deploy to ECS Fargate
+  # ═══════════════════════════════════════════════════════════════
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Get current task definition
+        id: task-def
+        run: |
+          TASK_DEF_ARN=$(aws ecs describe-services \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }} \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          aws ecs describe-task-definition \
+            --task-definition "${TASK_DEF_ARN}" \
+            --query 'taskDefinition' \
+            > task-definition.json
+
+          # Strip fields that aren't allowed in register-task-definition
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            task-definition.json > clean-task-def.json
+
+      - name: Update container image in task definition
+        run: |
+          IMAGE="${{ needs.build.outputs.image }}"
+          jq --arg IMAGE "$IMAGE" \
+            '.containerDefinitions[0].image = $IMAGE' \
+            clean-task-def.json > updated-task-def.json
+
+      - name: Register new task definition
+        id: register
+        run: |
+          NEW_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://updated-task-def.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "task_def_arn=${NEW_ARN}" >> "$GITHUB_OUTPUT"
+          echo "Registered: ${NEW_ARN}"
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --service ${{ env.ECS_SERVICE }} \
+            --task-definition ${{ steps.register.outputs.task_def_arn }} \
+            --force-new-deployment \
+            --query 'service.serviceName' \
+            --output text
+
+      - name: Wait for deployment to stabilize
+        run: |
+          echo "Waiting for ECS deployment to stabilize (up to 10 min)..."
+          aws ecs wait services-stable \
+            --cluster ${{ env.ECS_CLUSTER }} \
+            --services ${{ env.ECS_SERVICE }}
+          echo "Deployment complete."

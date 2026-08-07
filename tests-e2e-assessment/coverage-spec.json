@@ -1,0 +1,46 @@
+{
+  "_comment": "Drives the coverage assertion in assert.mjs. skipped_ok = test_ids that are LEGITIMATELY SKIPPED even on an authenticated headless run (interactive login/OTP, browser-only client checks, or out-of-band like SSRF callback). Any SKIPPED test NOT in this list fails the harness. must_run_authed = tests that MUST actually execute (status not SKIPPED) when a token is configured — this is the proof that the authenticated-scan path works end-to-end.",
+  "skipped_ok": [
+    "AUTH-01",
+    "AUTH-03",
+    "AUTH-05",
+    "API-05",
+    "API-06",
+    "BIZ-03",
+    "CLI-06",
+    "SSRF-03",
+    "XVAL-01",
+    "XVAL-02",
+    "XVAL-03",
+    "XVAL-04",
+    "XVAL-05",
+    "XVAL-06",
+    "XVAL-07",
+    "XVAL-08",
+    "XVAL-09",
+    "XVAL-10",
+    "XVAL-11"
+  ],
+  "skipped_ok_reasons": {
+    "AUTH-01": "interactive login/OTP/SSO flow",
+    "AUTH-03": "client-side token storage — needs a real browser",
+    "AUTH-05": "session fixation — needs the live login flow (pre/post-login session id)",
+    "API-05": "still hardcoded-skip in the pipeline (auth-session) — future auth-upgrade candidate",
+    "API-06": "still hardcoded-skip in the pipeline (auth-session) — future auth-upgrade candidate",
+    "BIZ-03": "needs a live browser context",
+    "CLI-06": "needs a live browser context",
+    "SSRF-03": "blind SSRF needs an out-of-band collaborator server",
+    "XVAL-01..11": "cross-validation correlates SAST findings against live endpoints — the deterministic headless path skips it (no live correlation step wired)"
+  },
+  "must_run_authed": [
+    "AUTH-02",
+    "AUTH-07",
+    "AUTHZ-01",
+    "AUTHZ-02",
+    "AUTHZ-03",
+    "AUTHZ-04"
+  ],
+  "_expected_blocked_comment": "No expected hard-blocks against the current released Kali image (v1.1.0 ships checkov in a venv + gitleaks on PATH). Any BLOCK now = a NEW regression (a backing tool went missing) and fails the harness. Exit-code cases (whatweb/fuzz_api/xsstrike) are warnings, not blocks.",
+  "expected_blocked": [],
+  "min_total_with_status": 90
+}

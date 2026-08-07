@@ -1,0 +1,108 @@
+# Paths excluded from the public open-core distribution.
+#
+# Consumed by scripts/build-public-tree.sh as `grep -vEf` patterns, matched
+# against repo-relative paths. One extended-regex per line; '#' comments and
+# blank lines are stripped by the script.
+#
+# NOTE: a blank pattern line matches EVERY path. The script strips them for
+# exactly that reason — an accidental empty line here would otherwise silently
+# produce an empty tree.
+#
+# Everything NOT listed here ships. Adding a path is a deliberate act; justify it
+# in a comment so the next person knows whether it still applies.
+
+# ─── Business-sensitive ──────────────────────────────────────────────────────
+# Pricing model, margin math, tier structure, competitor analysis.
+^docs/pricing.*$
+^docs/competitive.*$
+^docs/maestro-competitive-analysis.*$
+^docs/bundled-pricing-tiers-plan\.md$
+^docs/consolidation-roadmap\.md$
+^docs/install-only-product-plan\.md$
+^client-overview\.(md|pdf)$
+# Internal sales-deck generator; hardcodes a customer roster with risk data.
+^scripts/build-risk-slide\.py$
+# Internal customer-onboarding gate.
+^LAUNCH-READINESS\.md$
+
+# ─── Customer identity ───────────────────────────────────────────────────────
+# Per-customer report branding (logo + config). Unreferenced by any code.
+^docker/scripts/brands/
+
+# ─── Trademark ───────────────────────────────────────────────────────────────
+# Apache-2.0 grants no trademark rights (§6), and these are unreferenced by the
+# build. A self-hoster wants their own mark or none.
+^Groovy_Security_Logos/
+^icononly_nobuffer\.png$
+
+# ─── Real infrastructure identifiers ─────────────────────────────────────────
+# Terraform for the production CI trust policy: real AWS account ID, the real
+# GitHub OIDC provider ARN, and the two production IAM role
+# ARNs it references. Its own header says it belongs in the infra repo.
+^tests-e2e-assessment/ci/maestro-eval-ci\.tf$
+
+# ─── Stale binaries ──────────────────────────────────────────────────────────
+# A March render that still documents Ollama and pre-dates the current agent and
+# test counts. Regenerable from the .md, and unscannable by a text secret-scanner.
+^docs/kali-mcp-overview\.pdf$
+^docs/kali-mcp-overview\.md$
+
+# ─── Legacy / dead code ──────────────────────────────────────────────────────
+# Frozen Python backend, replaced by backend-rs/.
+^backend-legacy/
+# Marked legacy in CLAUDE.md. cli/ additionally still carries an Ollama provider,
+# which would contradict the main tree where it was removed.
+^cli/
+^src-tauri/
+# README no longer documents N8N as a supported path.
+^n8n/
+^N8N-DIRECT-MODE\.md$
+# Cannot run at all under Next's `output: export`, which is what the Tauri build
+# uses — it prints a hard error on every `next dev`. Web-platform-only, and part
+# of the proprietary control plane besides.
+^frontend/middleware\.ts$
+
+# ─── Internal CI ─────────────────────────────────────────────────────────────
+# Reference the private infra repo by name, dispatch to it with a token, and push
+# to Groovy-owned registries. They would fail on any fork and leak release
+# topology. The public repo keeps test.yml (with the license-boundary and
+# secret-scan jobs) and the e2e workflows.
+^\.github/workflows/release\.yml$
+^\.github/workflows/release-desktop\.yml$
+^\.github/workflows/deploy-platform\.yml$
+^\.github/workflows/publish-.*\.yml$
+^\.github/workflows/groovy-.*\.yml$
+^\.github/actions/maestro-update-check/
+^scripts/deploy-backend-prod\.sh$
+^scripts/upload-pending-reports\.mjs$
+
+# ─── Internal design docs ────────────────────────────────────────────────────
+# RFCs, plans and specs are internal thinking, often with unshipped decisions and
+# cost figures. docs/user-guide/ is NOT excluded — it is a hard build dependency
+# (include_dir!) and the source of the in-app documentation.
+^docs/RFC-.*\.md$
+^docs/.*-plan\.md$
+^docs/.*-spec\.md$
+^docs/caching-.*\.md$
+^docs/oracle-verification-layer\.md$
+^docs/identity-multi-idp-expansion\.md$
+^docs/windows-smoke-test\.md$
+^docs/v0\.1\.32-test-plan\.md$
+
+# ─── Local working data ──────────────────────────────────────────────────────
+# Untracked and gitignored anyway; listed so a `--others` build can't pick them
+# up. demo-targets/ is a deliberately-vulnerable demo app — publish it
+# separately and on purpose, not incidentally.
+^demo-targets/
+^reports/
+^data/
+^competitive-intel/
+
+# ─── Operator-local agent configuration ──────────────────────────────────────
+# .claude/settings.json is rewritten by whatever agent tooling the operator runs
+# (locally, a security daemon toggles `hooks`/`disableAllHooks` in it). That makes
+# the published tree NON-DETERMINISTIC — two builds minutes apart differ — and a
+# re-infected copy would carry absolute paths into the operator's home directory.
+# It is editor/agent config, not product code; contributors generate their own.
+^\.claude/settings\.json$
+^\.claude/settings\.local\.json$

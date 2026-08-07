@@ -1,0 +1,93 @@
+\# Dependencies
+node_modules/
+mcp-server/node_modules/
+frontend/node_modules/
+
+# Build output
+dist/
+mcp-server/dist/
+frontend/.next/
+frontend/out/
+
+# Environment
+.env
+.env.local
+
+# Per-user config overrides (committed YAMLs are public templates;
+# real targets/creds/profiles live in *.local.yml so they never ship)
+config/*.local.yml
+config/*.local.yml.bak
+
+# Data
+data/
+logs/
+*.db
+
+# Whiteout AI defender hooks — a host Desktop Guard daemon re-creates this dir
+# in any repo it watches. The hooks are NOT part of Maestro and must never ship
+# (they fire inside the assessment container via the project bind). Keep ignored.
+.claude/hooks/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Docker
+docker/kali-data/
+
+# Tauri/Rust
+frontend/src-tauri/target/
+src-tauri/target/
+target/
+
+# Sidecar binaries (built locally or in CI)
+frontend/src-tauri/binaries/tmux-*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Assessment reports contain real customer data (PII, vulnerabilities, tokens).
+# Never commit. Keep local. Anchored to repo root so it doesn't accidentally
+# catch frontend/app/reports/ or frontend/components/reports/ (UI code).
+/reports/
+
+# Claude Code local state
+.claude/scheduled_tasks.lock
+.claude/local/
+
+# E2E assessment harness transient artifacts
+tests-e2e-assessment/.nodegoat/
+tests-e2e-assessment/creds.json
+
+# Competitive intel — contains real people's public profile data (PII). Do not commit.
+competitive-intel/
+
+# ── Terraform ────────────────────────────────────────────────────────────────
+# .terraform/ holds downloaded provider binaries — ~670 MB for the AWS provider
+# alone. Never committed.
+**/.terraform/
+**/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+# Real variable values (domains, account-specific ARNs). The committed example
+# is terraform.tfvars.example.
+**/terraform.tfvars
+**/*.auto.tfvars
+crash.log
+crash.*.log
+
+# Output of scripts/build-public-tree.sh
+.public-tree/
+.public-tree.manifest.txt

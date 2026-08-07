@@ -1,0 +1,79 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before you paste anything:** assessment logs and reports contain target
+        hostnames, credentials and findings — deliberately, since reports are written
+        for an audience that already has that access. A public issue is not that
+        audience. Redact, or email <security@groovysec.com> instead.
+
+        Two things that are **not** bugs, and are worth ruling out first:
+        - Tests reporting `BLOCKED` rather than `PASS` — that is the provenance gate
+          refusing to let a missing scanner look like clean coverage.
+        - A thin report with no error — usually Anthropic's cyber safeguards on an
+          unenrolled account. Agents decline rather than crash. See the README.
+  - type: input
+    id: version
+    attributes:
+      label: Maestro version
+      description: Config → About, or the installer filename
+      placeholder: "1.12.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Local (data on this machine)
+        - Team (self-hosted backend)
+        - Managed (Groovy-hosted)
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - Windows
+        - Linux
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - Downloaded the signed build
+        - Built from source
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log output (scrubbed)
+      description: >-
+        macOS `~/Library/Logs/Maestro/maestro.log`, otherwise
+        `~/.kali-mcp-pentest/logs/`. Trim to the relevant part.
+      render: shell

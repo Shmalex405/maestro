@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  kali:
+    build:
+      context: .
+      dockerfile: Dockerfile.kali
+    container_name: kali-pentest
+    hostname: kali-pentest
+    networks:
+      - pentest-net
+    ports:
+      - "3001:3001"
+    volumes:
+      # Output and data
+      - ../logs:/opt/pentest/output/logs
+      - ../data:/opt/pentest/output/data
+      - kali-msf-data:/root/.msf4
+      # Mount home directory for repo access (read-only for safety)
+      - ${HOME}:/mnt/host-home:ro
+      # Or mount specific directories:
+      # - /path/to/your/repos:/mnt/repos:ro
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    security_opt:
+      - seccomp:unconfined
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    restart: unless-stopped
+    environment:
+      - HOST_HOME=/mnt/host-home
+
+volumes:
+  kali-msf-data:
+
+networks:
+  pentest-net:
+    driver: bridge

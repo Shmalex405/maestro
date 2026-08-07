@@ -1,0 +1,25 @@
+# Harness scope — authorizes ONLY the local known-vulnerable targets so the
+# scanners aren't blocked. Pointed at via SCOPE_CONFIG_PATH in docker-compose.yml.
+# This is a test fixture; it must never contain a real customer target.
+
+domains:
+  - pattern: "juice-shop"        # the compose service hostname (kali reaches http://juice-shop:3000)
+    environment: "harness"
+  - pattern: "localhost"
+    environment: "harness"
+
+networks:
+  - cidr: "172.16.0.0/12"        # docker-compose bridge range (juice-shop's resolved IP)
+    environment: "harness"
+  - cidr: "192.168.0.0/16"
+    environment: "harness"
+  - cidr: "127.0.0.0/8"
+    environment: "harness"
+
+# No cloud / identity / k8s targets in the harness (web + repo only). Fail-closed
+# by absence, which is the desired behavior.
+cloud_accounts: []
+identity_targets: []
+kubernetes: []
+
+exclusions: []

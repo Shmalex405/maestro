@@ -1,0 +1,34 @@
+# Agent Configurations
+
+recon-agent:
+  enabled: true
+  auto_start: true
+  timeout_minutes: 60
+  max_concurrent: 5
+
+vuln-scanner-agent:
+  enabled: true
+  auto_start: false  # Triggered by recon completion
+  timeout_minutes: 120
+  severity_threshold: "medium"
+
+web-app-agent:
+  enabled: true
+  auto_start: false  # Triggered manually or by Cycode import
+  timeout_minutes: 90
+  crawl_depth: 2
+
+exploit-agent:
+  enabled: true
+  auto_start: false  # Manual trigger only
+  timeout_minutes: 60
+  require_approval: false  # Full autonomy within scope
+  non_destructive_only: true
+
+report-agent:
+  enabled: true
+  auto_start: false  # Triggered by workflow completion
+  default_format: "markdown"
+  auto_jira: true
+  auto_sharepoint: true
+  email_on_critical: true

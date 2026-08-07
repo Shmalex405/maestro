@@ -1,0 +1,57 @@
+# Multi-stage build for Maestro web frontend (standalone Next.js)
+# This builds the web version with auth, API proxy, and no Tauri dependencies.
+#
+# Build:  docker build -f Dockerfile.web -t maestro-web .
+# Run:    docker run -p 3000:3000 \
+#           -e NEXTAUTH_URL=https://app.yourdomain.com \
+#           -e NEXTAUTH_SECRET=your-secret \
+#           -e COGNITO_CLIENT_ID=xxx \
+#           -e COGNITO_CLIENT_SECRET=xxx \
+#           -e COGNITO_ISSUER=https://cognito-idp.us-east-1.amazonaws.com/us-east-1_xxx \
+#           -e CUSTOMER_REGISTRY='[{"email":"*@acme.com","backendUrl":"https://acme-alb.example.com","customerName":"Acme"}]' \
+#           maestro-web
+
+# =============================================================================
+# Stage 1: Builder (full deps — dev included, needed to parse next.config.ts)
+# =============================================================================
+FROM node:20-alpine AS builder
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+COPY . .
+
+# Build in web/standalone mode
+ENV NEXT_OUTPUT_MODE=standalone
+ENV NEXT_PUBLIC_DEPLOY_MODE=web
+ENV NEXT_TELEMETRY_DISABLED=1
+
+RUN npm run build
+
+# =============================================================================
+# Stage 3: Production runner
+# =============================================================================
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+ENV NEXT_PUBLIC_DEPLOY_MODE=web
+
+# Don't run as root
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy standalone output
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+
+USER nextjs
+
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]

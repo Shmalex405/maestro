@@ -1,0 +1,36 @@
+Maestro
+Copyright 2026 Groovy Security
+
+This product includes software developed by Groovy Security
+(https://groovysec.com).
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+-------------------------------------------------------------------------------
+MIXED LICENSING
+
+Portions of this repository are proprietary and are not covered by the Apache
+License. See COMMERCIAL-COMPONENTS for the authoritative list and
+LICENSE-COMMERCIAL for their terms.
+
+-------------------------------------------------------------------------------
+THIRD-PARTY SECURITY TOOLING
+
+The Maestro toolkit container image (docker/Dockerfile.kali) installs
+third-party security tools, each under its own license, including but not
+limited to: nmap, nuclei, sqlmap, semgrep, bandit, gitleaks, trivy, grype,
+nikto, metasploit-framework, interactsh, ScoutSuite, Prowler, and PMapper.
+
+Those tools are not distributed as part of this repository. They are fetched at
+image build time from their respective upstream sources and remain subject to
+their own licenses. Building the image does not grant you any license to them
+beyond what their authors provide.
+
+-------------------------------------------------------------------------------
+AUTHORIZED USE
+
+Maestro performs active exploitation against live systems, including sending
+real payloads, forging tokens, and accessing data. You must hold documented
+authorization for every target you assess. No license in this repository
+conveys authorization to test systems you do not own or are not contractually
+permitted to test.

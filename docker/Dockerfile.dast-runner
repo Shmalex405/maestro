@@ -1,0 +1,48 @@
+# =============================================================================
+# DAST scheduler runner image. Build context = repo ROOT (needs mcp-server/ +
+# config/). FROM the published Kali toolkit image (all scanners) + the baked-in
+# MCP server so a Fargate task can execute a scheduled scan with NO desktop to
+# sync it in (the desktop/e2e-harness normally materialize mcp-server at runtime;
+# a headless task can't). Entrypoint = docker/scripts/dast-runner.sh.
+# =============================================================================
+
+# Global ARG (declared BEFORE the first FROM) so it's usable in the stage-2 FROM.
+# An ARG declared after a FROM is stage-scoped and invisible to later FROMs.
+ARG KALI_TAG=latest
+
+# --- Stage 1: build the MCP server (TypeScript → dist) ---
+FROM node:20-slim AS mcpbuild
+WORKDIR /build
+COPY mcp-server/package.json mcp-server/package-lock.json ./
+RUN npm ci
+COPY mcp-server/ ./
+RUN npm run build
+
+# --- Stage 2: the runner image ---
+# Pin via --build-arg KALI_TAG=v1.5.0 in CI; :latest for local builds. The Kali
+# image is public GHCR, so FROM needs no auth.
+ARG KALI_TAG=latest
+FROM ghcr.io/shmalex405/docker-kali:${KALI_TAG}
+
+# Baked MCP server (prod deps only) + compiled dist.
+WORKDIR /opt/pentest/mcp-server
+COPY mcp-server/package.json mcp-server/package-lock.json ./
+RUN npm ci --omit=dev
+COPY --from=mcpbuild /build/dist ./dist
+
+# The attack catalog the deterministic pipeline + provenance gate read.
+COPY config/test-matrix.yml /opt/pentest/config/test-matrix.yml
+
+# Headless runner entrypoint (one scheduled scan, then exit).
+COPY docker/scripts/dast-runner.sh /opt/pentest/scripts/dast-runner.sh
+RUN chmod +x /opt/pentest/scripts/dast-runner.sh
+
+# Bake the API fuzzer directly (overriding the Kali base copy) so the
+# non-destructive guarantee — write methods discovered, never fired — ships with
+# the runner immediately, independent of the base-image rebuild cadence.
+COPY docker/scripts/fuzz-api.py /opt/pentest/scripts/fuzz-api.py
+
+ENV AUTONOMOUS_PORT=3001 \
+    TEST_MATRIX_PATH=/opt/pentest/config/test-matrix.yml
+WORKDIR /opt/pentest
+ENTRYPOINT ["/opt/pentest/scripts/dast-runner.sh"]

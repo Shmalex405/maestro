@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Required for WebKit JavaScript JIT -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <!-- Required for WebKit and dynamic library loading -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- Required for tmux sidecar and bundled binaries -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <!-- Required for Docker API, MCP server, and API connections -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <!-- Required for local dev server and MCP server communication -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+    <!-- Required for file dialogs and user-selected file access -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+</dict>
+</plist>

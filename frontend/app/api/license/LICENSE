@@ -1,0 +1,16 @@
+Maestro Commercial License
+Copyright (c) 2026 Groovy Security
+
+The contents of this directory are PROPRIETARY and are NOT covered by the
+Apache License 2.0 that governs the rest of this repository.
+
+This is part of the Maestro multi-tenant control plane (email-to-org discovery
+and license validation). Self-hosted deployments do not use it — see
+SELF-HOSTING.md, which replaces it with a local config file.
+
+Use requires an active Maestro subscription from Groovy Security or written
+authorization.
+
+Full terms:   repository root: LICENSE-COMMERCIAL
+Manifest:     repository root: COMMERCIAL-COMPONENTS
+Inquiries:    support@groovysec.com

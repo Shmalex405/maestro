@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 🔒 Security vulnerability in Maestro
+    url: https://github.com/Shmalex405/maestro/security/policy
+    about: >-
+      Report privately by email, never as a public issue. Maestro holds cloud and
+      identity credentials and drives live exploitation, so a flaw here affects
+      every system an operator is authorized to test.
+  - name: 💡 Feature idea or general feedback
+    url: https://github.com/Shmalex405/maestro/discussions
+    about: Suggestions, questions and "this workflow is awkward" belong in Discussions.
+  - name: 💼 Commercial licensing, attestation or paid support
+    url: mailto:support@groovysec.com
+    about: The signed pentest attestation, CVP enrollment, hosted OAST, support.

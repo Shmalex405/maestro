@@ -1,0 +1,127 @@
+[package]
+name = "maestro-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Maestro backend (Rust port of backend/app)"
+license = "Apache-2.0"
+
+[[bin]]
+name = "maestro-backend"
+path = "src/main.rs"
+
+[dependencies]
+# Shared wire types with the Tauri desktop shell.
+maestro-types = { path = "../crates/maestro-types" }
+
+# Web stack.
+axum = { version = "0.7", features = ["macros", "multipart"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+tokio = { version = "1", features = ["full"] }
+
+# Serde + JSON.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database.
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json",
+    "macros",
+    "migrate",
+] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Auth.
+jsonwebtoken = "9"
+bcrypt = "0.15"
+
+# HTTP client for JWKS/OIDC discovery.
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+
+# AWS SDK for Cognito admin operations (invite/list/disable users).
+# Pulled lazily via a small feature set to keep build times bearable.
+aws-config = { version = "1", default-features = false, features = [
+    "behavior-version-latest",
+    "rustls",
+    "rt-tokio",
+    "credentials-process",
+    "sso",
+] }
+aws-sdk-cognitoidentityprovider = { version = "1", default-features = false, features = [
+    "behavior-version-latest",
+    "rustls",
+    "rt-tokio",
+] }
+# S3 for report artifact storage. Bytes (PDFs and other large artifacts)
+# go to a per-customer bucket; the DB row stores the S3 key. Download
+# returns a short-lived presigned URL — the bucket itself is private.
+aws-sdk-s3 = { version = "1", default-features = false, features = [
+    "behavior-version-latest",
+    "rustls",
+    "rt-tokio",
+    "sigv4a",
+] }
+# STS for the cloud-assessment credential broker: assume the customer's
+# read-only assessment role (which trusts this deployment's task role) and
+# hand short-lived creds to the desktop.
+aws-sdk-sts = { version = "1", default-features = false, features = [
+    "behavior-version-latest",
+    "rustls",
+    "rt-tokio",
+] }
+
+# JWKS cache.
+moka = { version = "0.12", features = ["future"] }
+
+# Markdown + PDF rendering (Phase 3).
+pulldown-cmark = { version = "0.12", default-features = false, features = ["html"] }
+headless_chrome = "1"
+regex = "1"
+once_cell = "1"
+
+# SHA-256 for finding fingerprints (migration 0007 dedup).
+sha2 = "0.10"
+hex = "0.4"
+
+# URL parsing for target canonicalization (migration 0018). Mirrors the
+# JS URL behavior used by mcp-server/src/integrations/finding-fingerprint.ts
+# so backend and MCP-side fingerprints match byte-for-byte.
+url = "2"
+
+# Validation.
+validator = { version = "0.18", features = ["derive"] }
+
+# Errors + logging.
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Env var loading.
+dotenvy = "0.15"
+
+# Streams for SSE.
+futures-core = "0.3"
+async-stream = "0.3"
+
+[dev-dependencies]
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "postgres",
+    "uuid",
+    "chrono",
+    "json",
+    "macros",
+    "migrate",
+    "any",
+] }
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }

@@ -1,0 +1,59 @@
+# The web image (Dockerfile.web) builds the Next.js standalone frontend.
+# None of the desktop / Tauri / test / build-artifact files belong in the
+# Docker build context.
+
+# Tauri desktop app — unrelated to the web build, and src-tauri/target/
+# alone is tens of GB of Rust artifacts. Always exclude.
+src-tauri/
+
+# node_modules is reinstalled in the deps stage. Bringing it in via
+# `COPY . .` would bloat the context by ~600 MB.
+node_modules/
+.pnp/
+.pnp.*
+
+# Next.js build artifacts (regenerated in the builder stage)
+.next/
+out/
+
+# Tests — the web image is a runtime image, no tests needed
+__tests__/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+vitest.config.ts
+coverage/
+
+# Type check incremental cache
+tsconfig.tsbuildinfo
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Git / CI
+.git/
+.gitignore
+.github/
+
+# Docker scaffolding
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+
+# Env files — never bake secrets into an image layer
+.env
+.env.*
+!.env.example
+
+# Logs / crumbs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Misc
+.DS_Store

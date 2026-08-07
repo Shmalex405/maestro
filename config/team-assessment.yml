@@ -1,0 +1,946 @@
+# Team-Based Assessment Configuration
+# ====================================
+# This file is the AUTHORITATIVE source for assessment orchestration.
+# The team lead reads the `phases:` array below to build its TaskCreate list
+# at the start of every assessment — DO NOT hardcode phase lists in SKILL.md
+# or in agent prompts. Add a new phase here and every future assessment picks
+# it up automatically.
+#
+# Each agent declares:
+#   - checkpoint_file: the file the agent MUST write before completion (used
+#     by the lead's pre-dispatch blocked_by gate + pre-report manifest check)
+#   - applies_when: optional condition string (e.g., cloud_accounts in scope)
+#
+# See skills/team-assessment/SKILL.md for the full orchestration protocol.
+#
+# Matrix superset: 232 tests across up to 22 agents (1 lead + 21 workers).
+# The per-run denominator is the SCOPE-DERIVED in-scope subset, not a fixed number
+# (see the `verification:` block at the bottom of this file). Counts below are the
+# full matrix for reference only.
+# Cloud tests (29) execute only when cloud_accounts defined in scope.yml
+# Cloud agents (cloud-recon, cloud-exploit, cloud-analysis) run only in cloud scope
+# Identity tests (60) + identity cross-validation (XVAL-14/15) execute only when
+#   identity_targets defined in scope.yml
+# Identity agents (identity-recon, identity-exploit, identity-analysis) run only in identity scope
+# AI tests (23) execute only when ai_targets defined in scope.yml
+# AI agents (ai-recon, ai-redteam, ai-analysis) run only in ai scope
+# Severity-calibrator (0 tests) re-rates severity based on actual exploitation outcomes
+# cloud-analysis (0 tests) writes the Cloud Companion Report — analysis only, never re-scans
+# identity-analysis (0 tests) writes the Identity Companion Report — analysis only, never re-scans/re-sprays
+# ai-analysis (0 tests) writes the AI Companion Report — analysis only, never re-attacks
+
+# Execution phases (determines ordering and parallelism)
+phases:
+  - phase: 1
+    name: "Authentication"
+    agents: ["team-lead"]
+    parallel: false
+    description: "Interactive OTP auth, token extraction, browser state persistence"
+
+  - phase: 2a
+    name: "Recon + SAST Scanning + Cloud Recon + Identity Recon + AI Recon"
+    agents: ["recon-infra", "sast-scan", "cloud-recon", "identity-recon", "ai-recon"]
+    parallel: true
+    description: "Reconnaissance, scanner execution, cloud enumeration, identity (AD/Entra/M365) enumeration, and AI/LLM fingerprint + untrusted-input surface mapping run in parallel. cloud-recon runs only with cloud_accounts, identity-recon only with identity_targets, ai-recon only with ai_targets in scope."
+
+  - phase: 2b
+    name: "SAST Analysis"
+    agents: ["sast-analysis"]
+    parallel: false
+    blocked_by: ["sast-scan"]
+    description: "Code context analysis and SAST companion report (needs scan results)"
+
+  - phase: 3
+    name: "Web + API + Cloud + Identity + AI Exploitation"
+    agents: ["web-security", "api-graphql", "cloud-exploit", "identity-exploit", "ai-redteam"]
+    parallel: true
+    blocked_by: ["recon-infra", "sast-scan", "cloud-recon", "identity-recon", "ai-recon"]
+    description: "Web app, API/GraphQL, cloud, identity (AD/Entra/M365), and AI/LLM (injection/jailbreak/output-handling/excessive-agency) exploitation run in parallel. cloud-exploit/identity-exploit/ai-redteam run only when their scope dimension is present."
+
+  - phase: 3.5
+    name: "Chain Hypothesize"
+    agents: ["chain-analysis"]
+    parallel: false
+    blocked_by: ["web-security", "api-graphql"]
+    description: "Analyze findings for multi-step attack chains before exploitation"
+
+  - phase: 4
+    name: "Cross-Validation + QA + SAST Enrichment"
+    agents: ["crossval-qa"]
+    parallel: false
+    blocked_by: ["chain-analysis"]
+    description: "Exploit validation, cross-validate findings, QA all findings, enrich SAST companion with DAST evidence"
+
+  - phase: 4.5
+    name: "Chain Analysis Touch 2"
+    agents: ["chain-analysis"]
+    parallel: false
+    blocked_by: ["crossval-qa"]
+    description: "Second-pass chain analysis: validate hypotheses against exploit and cross-validation results"
+
+  - phase: 4.6
+    name: "Post-Exploitation"
+    agents: ["post-exploit-operator"]
+    parallel: false
+    blocked_by: ["chain-analysis"]
+    applies_when: "post_exploitation defined in scope.yml (and a foothold was established)"
+    description: "Run the plan→execute→deposit→re-plan campaign from each confirmed foothold (pivot, loot, escalate). Assumed-breach within authorization_boundary; lead fans out one operator per foothold and runs rounds"
+
+  - phase: 4.7
+    name: "Verdict Gate"
+    agents: ["verifier"]
+    parallel: false
+    blocked_by: ["crossval-qa", "chain-analysis", "post-exploit-operator"]
+    description: "Earn a verdict for every exploitable candidate: pick the strongest applicable oracle and re-prove the finding in code (verify_finding). Verdicts are earned by the oracle, never asserted — a finding that is not verified is reported as an unproven candidate. Runs before calibration so severity anchors on verified outcomes"
+
+  - phase: 4.75
+    name: "Severity Calibration"
+    agents: ["severity-calibrator"]
+    parallel: false
+    blocked_by: ["crossval-qa", "chain-analysis", "post-exploit-operator", "verifier"]
+    description: "Re-rate finding severity based on actual exploitation outcomes and reachability, not just intrinsic CVE/CWE severity. Anchors on the Phase 4.7 verdicts: a candidate is not a proven exploit"
+
+  - phase: 4.8
+    name: "Cloud Analysis"
+    agents: ["cloud-analysis"]
+    model: claude-sonnet-4-6  # analysis/synthesis from checkpoints (no re-scan, no exploitation reasoning) → Sonnet (token tiering; runtime source is .claude/agents/cloud-analysis.md frontmatter)
+    parallel: false
+    blocked_by: ["cloud-exploit", "chain-analysis", "severity-calibrator"]
+    applies_when: "cloud_accounts defined in scope.yml"
+    description: "Synthesize the Cloud Companion Report (escalation graph, cloud chains) from cloud-recon/exploit checkpoints — analysis only, no re-scan"
+
+  - phase: 4.85
+    name: "Identity Analysis"
+    agents: ["identity-analysis"]
+    model: claude-sonnet-4-6  # analysis/synthesis from checkpoints (no re-scan, no re-spray, no exploitation reasoning) → Sonnet (token tiering; runtime source is .claude/agents/identity-analysis.md frontmatter)
+    parallel: false
+    blocked_by: ["identity-exploit", "chain-analysis", "severity-calibrator"]
+    applies_when: "identity_targets defined in scope.yml"
+    description: "Synthesize the Identity Companion Report (AD/Entra privilege-escalation graph, identity chains CHAIN-41..50) from identity-recon/exploit checkpoints — analysis only, never re-scans or re-sprays"
+
+  - phase: 4.9
+    name: "AI Analysis"
+    agents: ["ai-analysis"]
+    parallel: false
+    blocked_by: ["ai-redteam", "chain-analysis", "severity-calibrator"]
+    applies_when: "ai_targets defined in scope.yml"
+    description: "Synthesize the AI Companion Report (OWASP LLM Top 10 + MITRE ATLAS, injection-surface map, excessive-agency graph) from ai-recon/ai-redteam checkpoints — analysis only, never re-attacks"
+
+  - phase: 4.92
+    name: "Post-Exploitation Analysis"
+    agents: ["post-exploit-analysis"]
+    model: claude-sonnet-4-6  # analysis/synthesis from checkpoints (no re-attack) → Sonnet (token tiering; runtime source is .claude/agents/post-exploit-analysis.md frontmatter)
+    parallel: false
+    blocked_by: ["post-exploit-operator", "severity-calibrator"]
+    applies_when: "post_exploitation defined in scope.yml (and a foothold was established)"
+    description: "Synthesize the Post-Exploitation Campaign Report (foothold→crown-jewels narrative + campaign graph: WALKED/AVAILABLE/BLOCKED, Actions-Withheld) from post-exploit-operator checkpoints + the foothold store — analysis only, never re-attacks"
+
+  - phase: 5a
+    name: "Compliance Mapping"
+    agents: ["compliance"]
+    parallel: false
+    blocked_by: ["crossval-qa", "chain-analysis", "severity-calibrator"]
+    description: "Map findings to OWASP/NIST/PCI/CVSS frameworks"
+
+  - phase: 5b
+    name: "Report Writing"
+    agents: ["report-writer"]
+    parallel: false
+    blocked_by: ["compliance"]
+    description: "Generate full markdown assessment report"
+
+  - phase: 5b.5
+    name: "Report Enrichment"
+    agents: ["report-enrichment"]
+    parallel: false
+    blocked_by: ["report-writer"]
+    description: "Validate report against quality standards, fix gaps, re-fetch missing evidence"
+
+  - phase: 5c
+    name: "PDF Rendering"
+    agents: ["pdf-renderer"]
+    parallel: false
+    blocked_by: ["report-enrichment"]
+    description: "Render markdown reports to PDF"
+
+# Agent-to-test mapping
+agents:
+
+  team-lead:
+    description: "Team lead handles interactive authentication (OTP/MFA)"
+    subagent_type: null  # Team lead is the main conversation, not a spawned agent
+    tests:
+      - AUTH-01  # Complete authentication flow
+      - AUTH-02  # JWT/token analysis
+      - AUTH-03  # Token storage security
+      - AUTH-04  # Unauthenticated API access
+      - AUTH-05  # Session fixation test
+      - AUTH-06  # Session token entropy
+      - AUTH-07  # Token replay after logout
+      - AUTH-08  # Password policy validation
+    count: 8
+    # team lead writes a target-specific checkpoint, not a fixed-name JSON
+    checkpoint_file: "reports/{TARGET_SLUG}-checkpoint.yml"
+    outputs:
+      - auth_token       # Bearer token for downstream agents
+      - graphql_endpoint # Discovered GraphQL URL
+      - api_base_url     # Base API URL
+      - cookie_names     # Session cookie names
+      - browser_state    # Saved via browser_save_state
+
+  recon-infra:
+    description: "Reconnaissance + SSL/TLS/DNS infrastructure testing"
+    subagent_type: "general-purpose"
+    tests:
+      - RECON-01  # Port scan primary target
+      - RECON-02  # Subdomain enumeration
+      - RECON-03  # Service fingerprinting
+      - RECON-04  # Web technology scan
+      - RECON-05  # DNS record enumeration
+      - RECON-06  # Zone transfer attempt
+      - TLS-01    # SSL/TLS protocol analysis
+      - TLS-02    # Certificate chain validation
+      - TLS-03    # Cipher suite analysis
+      - TLS-04    # Known SSL vulnerabilities
+    count: 10
+    checkpoint_file: "reports/recon-infra-results.json"
+    inputs:
+      - targets
+    outputs:
+      - open_ports
+      - subdomains
+      - web_technologies
+      - dns_records
+      - ssl_findings
+      - endpoints          # Full endpoint map from crawling + API docs + fuzzing
+
+  sast-scan:
+    description: "SAST scanner execution (runs all scanners, creates findings)"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # mechanical agent → Sonnet (token tiering; runtime source is .claude/agents/sast-scan.md frontmatter)
+    tests:
+      # Code Analysis (10)
+      - SAST-01   # Semgrep OWASP Top 10
+      - SAST-02   # Secrets scanning
+      - SAST-03   # Dependency vulnerability scan
+      - SAST-04   # Entry point mapping
+      - SAST-05   # Defense analysis
+      - SAST-06   # IaC scanning
+      - SAST-07   # Security audit ruleset
+      - SAST-08   # Language-specific scanning
+      - SAST-09   # Dangerous function detection
+      - SAST-10   # Git history secrets
+      # Supply Chain (4)
+      - SAST-SC-01  # Critical dependency vulnerabilities
+      - SAST-SC-02  # High dependency vulnerabilities
+      - SAST-SC-03  # License compliance
+      - SAST-SC-04  # Dependency confusion risk
+    count: 14
+    checkpoint_file: "reports/sast-scan-results.json"
+    inputs:
+      - repo_paths
+    outputs:
+      - entry_points
+      - sast_finding_ids
+      - scanner_finding_summaries  # Pre-digested for sast-analysis (not raw output)
+
+  sast-analysis:
+    description: "SAST code analysis: analyze_code_context for every finding, data flows, defense verification, SAST companion report"
+    subagent_type: "general-purpose"
+    tests:
+      # Data Flow (5)
+      - SAST-DF-01  # SQL injection data flows
+      - SAST-DF-02  # XSS data flows
+      - SAST-DF-03  # RCE data flows
+      - SAST-DF-04  # SSRF data flows
+      - SAST-DF-05  # File system access flows
+      # Defense Verification (5)
+      - SAST-DEF-01  # Authentication middleware coverage
+      - SAST-DEF-02  # Input validation coverage
+      - SAST-DEF-03  # CSRF protection coverage
+      - SAST-DEF-04  # Output encoding coverage
+      - SAST-DEF-05  # SQL parameterization coverage
+    count: 10
+    checkpoint_file: "reports/sast-analysis-results.json"
+    inputs:
+      - repo_paths
+      - sast_finding_summaries  # From sast-scan (pre-digested, not raw scanner output)
+      - entry_points            # From sast-scan
+    outputs:
+      - data_flow_findings
+      - defense_gaps
+      - sast_report_path  # Path to SAST companion report markdown
+
+  web-security:
+    description: "Web application security testing (authorization, headers, injection, SSRF, client-side)"
+    subagent_type: "general-purpose"
+    tests:
+      # Authorization (4)
+      - AUTHZ-01  # IDOR on primary resources
+      - AUTHZ-02  # Horizontal privilege escalation
+      - AUTHZ-03  # Vertical privilege escalation
+      - AUTHZ-04  # Function-level access control
+      # Security Headers (4)
+      - HDR-01    # Content-Security-Policy check
+      - HDR-02    # CORS policy check
+      - HDR-03    # Standard security headers
+      - HDR-04    # Cookie security flags
+      # CORS (3)
+      - CORS-01   # Origin reflection
+      - CORS-02   # Null origin bypass
+      - CORS-03   # Credentials with wildcard
+      # Injection (8)
+      - INJ-01    # SQL injection
+      - INJ-02    # XSS
+      - INJ-03    # Server-Side Template Injection
+      - INJ-04    # Command injection
+      - INJ-05    # LDAP injection
+      - INJ-06    # XPath injection
+      - INJ-07    # HTTP header injection (CRLF)
+      - INJ-08    # NoSQL injection
+      # SSRF (3)
+      - SSRF-01   # Internal IP access
+      - SSRF-02   # Cloud metadata access
+      - SSRF-03   # DNS rebinding
+      # Client-Side (6)
+      - CLI-01    # Source map accessibility
+      - CLI-02    # JS bundle analysis
+      - CLI-03    # Config file exposure
+      - CLI-04    # Error message information leakage
+      - CLI-05    # DOM-based XSS
+      - CLI-06    # Prototype pollution
+    count: 28
+    checkpoint_file: "reports/web-security-results.json"
+    inputs:
+      - targets
+      - auth_token
+      - endpoints       # From recon-infra
+      - entry_points    # From sast-scan
+      - browser_state   # From team-lead
+    outputs:
+      - web_finding_ids
+
+  api-graphql:
+    description: "API security, GraphQL, vulnerability scanning, file upload, business logic, protocol, deserialization"
+    subagent_type: "general-purpose"
+    tests:
+      # GraphQL (8)
+      - GQL-01    # Introspection query
+      - GQL-02    # Batch query test
+      - GQL-03    # Schema enumeration via suggestions
+      - GQL-04    # Bulk data enumeration
+      - GQL-05    # IDOR via direct object lookup
+      - GQL-06    # Query aliasing rate limit bypass
+      - GQL-07    # API rate limiting
+      - GQL-08    # Mutation discovery
+      # API Security (6)
+      - API-01    # OpenAPI/Swagger spec discovery
+      - API-02    # Schema-based endpoint fuzzing
+      - API-03    # Rate limiting enforcement
+      - API-04    # API versioning bypass
+      - API-05    # Mass assignment
+      - API-06    # Excessive data exposure
+      # Vulnerability Scanning (3)
+      - VSCAN-01  # Nuclei CVE scanning
+      - VSCAN-02  # CSRF protection check
+      - VSCAN-03  # Nikto web server scanning
+      # File Upload (3)
+      - UPLOAD-01  # Extension bypass
+      - UPLOAD-02  # Content-Type manipulation
+      - UPLOAD-03  # Path traversal in filename
+      # Business Logic (3)
+      - BIZ-01    # Race condition
+      - BIZ-02    # Price/quantity manipulation
+      - BIZ-03    # Workflow bypass
+      # Transport/Protocol (3)
+      - PROTO-01  # HTTP request smuggling
+      - PROTO-02  # WebSocket security
+      - PROTO-03  # Cache poisoning
+      # Deserialization (1)
+      - DESER-01  # Deserialization testing
+    count: 27
+    checkpoint_file: "reports/api-graphql-results.json"
+    inputs:
+      - targets
+      - auth_token
+      - graphql_endpoint  # From team-lead
+      - api_base_url      # From team-lead
+      - endpoints         # From recon-infra (crawl + swagger + fuzz)
+      - entry_points      # From sast-scan (code-level routes)
+    outputs:
+      - api_finding_ids
+
+  crossval-qa:
+    description: "Cross-validate SAST findings against live endpoints, QA validate all findings, enrich SAST companion report"
+    subagent_type: "general-purpose"
+    tests:
+      - XVAL-01  # Validate SAST XSS findings against live endpoints
+      - XVAL-02  # Validate SAST injection findings against live endpoints
+      - XVAL-03  # Confirm token storage matches code
+      - XVAL-04  # Confirm security header gaps match code
+      - XVAL-05  # Validate SAST SSRF findings against live endpoints
+      - XVAL-06  # Validate SAST RCE findings against live endpoints
+      - XVAL-07  # Validate SAST auth bypass findings against live endpoints
+      - XVAL-08  # Validate SAST deserialization findings
+      - XVAL-09  # Validate SAST rate limiting gaps against live API
+      - XVAL-10  # Validate SAST path traversal findings against live endpoints
+      - XVAL-11  # Validate SAST secrets exposure in deployed environment
+      - XVAL-12  # Cloud posture vs exploitation (N_A when cloud_accounts not in scope)
+      - XVAL-13  # IaC vs live cloud config drift (N_A when cloud_accounts not in scope OR no repo_paths)
+      - XVAL-14  # Identity recon vs exploitation validation (N_A when identity_targets not in scope)
+      - XVAL-15  # SAST domain-creds vs live AD foothold (N_A when identity_targets not in scope OR no repo_paths)
+    count: 15
+    checkpoint_file: "reports/crossval-qa-results.json"
+    inputs:
+      - targets
+      - auth_token
+      - sast_finding_ids   # From sast-scan agent
+      - web_finding_ids    # From web-security agent
+      - api_finding_ids    # From api-graphql agent
+      - identity_finding_ids  # From identity-recon + identity-exploit (XVAL-14/15 — identity scope only; absent → those tests N_A)
+      - entry_points       # From sast-scan agent
+      - merged_endpoints   # From team lead (recon + SAST combined endpoint map)
+      - sast_report_path   # From sast-analysis agent (for enrichment)
+      - all_test_results   # From all previous agents
+    outputs:
+      - qa_validation_results
+      - confidence_scores
+      - false_positives
+      - coverage_gaps
+      - enriched_sast_report_path  # Updated SAST companion with DAST evidence
+
+  chain-analysis:
+    description: "Attack chain analysis: identify and validate multi-step attack paths"
+    subagent_type: "general-purpose"
+    tests:
+      - CHAIN-01  # Grants/requires capability tagging
+      - CHAIN-02  # Catalog pattern matching
+      - CHAIN-03  # Emergent chain discovery
+      - CHAIN-04  # Multi-step exploit hypothesis generation
+      - CHAIN-05  # Chain exploitation validation
+      - CHAIN-06  # Combined severity calculation
+      - CHAIN-07  # Defense-in-depth analysis
+      - CHAIN-08  # Chain remediation prioritization
+    count: 8
+    checkpoint_file: "reports/chain-analysis-results.json"
+    inputs:
+      - all_findings       # From all previous agents
+      - exploit_results    # From crossval-qa
+      - merged_endpoints   # From team lead (recon + SAST combined endpoint map)
+      - entry_points       # From sast-scan agent
+    outputs:
+      - chain_hypotheses
+      - chain_validation
+      - chain_finding_ids
+
+  verifier:
+    description: "Verdict gate: re-prove every exploitable candidate under a deterministic oracle. Supplies the experiment, never the verdict"
+    subagent_type: "general-purpose"
+    tests: []  # No test IDs — verification only
+    count: 0
+    checkpoint_file: "reports/verifier-results.json"
+    inputs:
+      - all_finding_ids
+      - crossval_qa_results_path   # reports/crossval-qa-results.json
+      - auth_context               # Real tokens/cookies per role — differential needs two identities
+    outputs:
+      - verdict_summary            # counts of verified / refuted / candidate
+      - verified_finding_ids       # the only findings that may be reported as proven
+      - refuted_finding_ids        # includes mechanism_mismatch — findings that name the wrong bug
+
+  severity-calibrator:
+    description: "Re-rate finding severity based on actual exploitation outcomes and reachability, not just intrinsic CVE/CWE severity"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # mechanical agent → Sonnet (token tiering; runtime source is .claude/agents/severity-calibrator.md frontmatter)
+    tests: []  # No test IDs — calibration only
+    count: 0
+    checkpoint_file: "reports/severity-calibration-results.json"
+    inputs:
+      - all_finding_ids
+      - crossval_qa_results_path   # reports/crossval-qa-results.json
+      - verifier_results_path      # reports/verifier-results.json — oracle verdicts, drives Rule 1a
+      - chain_analysis_results_path # reports/chain-analysis-results.json
+      - sast_analysis_results_path  # reports/sast-analysis-results.json
+      - compliance_results_path     # reports/compliance-results.json (if already produced)
+    outputs:
+      - severity_calibration_path  # reports/severity-calibration-results.json
+      - calibration_summary        # Per-finding original vs calibrated severity with justifications
+
+  post-exploit-operator:
+    description: "Post-exploitation actor: plan→execute→deposit→re-plan campaign from a confirmed foothold (pivot/loot/escalate). Assumed-breach within authorization_boundary"
+    subagent_type: "general-purpose"
+    applies_when: "post_exploitation defined in scope.yml (and a foothold was established)"
+    tests:
+      - POSTX-01  # Foothold enumeration (internal recon)
+      - POSTX-02  # Capability-gated planning (find_attack_paths seed_caps)
+      - POSTX-03  # Pivot execution (execute_through_foothold)
+      - POSTX-04  # Loot capture (establish_foothold + loot nodes)
+      - POSTX-05  # Escalation toward crown jewels
+      - POSTX-06  # Boundary discipline (authorization_boundary / never_touch)
+    count: 6
+    checkpoint_file: "reports/post-exploit-operator-results.json"
+    inputs:
+      - foothold_id                  # The foothold this operator campaigns from (lead fans out one per foothold)
+      - chain_analysis_results_path  # The validated capability map
+      - all_findings
+    outputs:
+      - campaign_steps               # Walked steps with real command + response
+      - loot                         # Deposited footholds + loot node keys
+      - crown_jewels_reached
+      - frontier_remaining           # Available-not-walked moves
+      - withheld                     # Out-of-boundary / never_touch / destructive / needs-confirmation
+
+  post-exploit-analysis:
+    description: "Synthesize the Post-Exploitation Campaign Report (foothold→crown-jewels narrative + campaign graph) — analysis only, never re-attacks"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # analysis/synthesis from checkpoints → Sonnet (token tiering; runtime source is .claude/agents/post-exploit-analysis.md frontmatter)
+    applies_when: "post_exploitation defined in scope.yml (and a foothold was established)"
+    tests: []  # No test IDs — report synthesis only
+    count: 0
+    checkpoint_file: "reports/post-exploit-analysis-results.json"
+    inputs:
+      - post_exploit_operator_results_path  # one per foothold; merged
+      - severity_calibration_path
+      - chain_analysis_results_path
+    outputs:
+      - campaign_report_path                 # The Post-Exploitation Campaign Report (markdown → PDF)
+      - campaign_graph_summary               # footholds, crown_jewels_reached, walked/available/blocked counts
+
+  compliance:
+    description: "Compliance mapping: OWASP/NIST/PCI/CVSS framework mapping"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # mechanical agent → Sonnet (token tiering; runtime source is .claude/agents/compliance.md frontmatter)
+    tests: []  # No test IDs — mapping only
+    count: 0
+    checkpoint_file: "reports/compliance-results.json"
+    inputs:
+      - all_finding_ids
+      - all_test_results
+      - severity_calibration_path  # reports/severity-calibration-results.json (CVSS may inform or be informed by calibration)
+    outputs:
+      - compliance_mapping_table  # Structured mapping for report-writer
+
+  report-writer:
+    description: "Generate full markdown assessment report"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # synthesis+formatting from structured checkpoints → Sonnet (token tiering; runtime source is .claude/agents/report-writer.md frontmatter). Paired with report-enrichment=Sonnet so the ALL-means-ALL audit stays strong.
+    tests: []  # No test IDs — report generation only
+    count: 0
+    # report-writer produces markdown, not a results.json — manifest check
+    # uses report_markdown_path output instead
+    checkpoint_file: null
+    inputs:
+      - all_test_results       # Complete in-scope coverage map (scope-derived count)
+      - all_finding_ids        # All findings from MCP DB
+      - compliance_mapping     # From compliance agent
+      - qa_validation_results  # From crossval-qa (includes secrets validation summary)
+      - sast_report_path       # From sast-analysis (enriched by crossval-qa)
+      - cloud_report_path      # From cloud-analysis (Cloud Companion Report — present only in cloud scope)
+      - identity_report_path   # From identity-analysis (Identity Companion Report — present only in identity scope)
+      - ai_report_path         # From ai-analysis (AI Companion Report — present only in ai scope)
+      - severity_calibration   # From severity-calibrator: per-finding original vs calibrated severity + justification
+      - targets
+      - repo_paths
+      - assessment_metadata
+      - agent_attribution      # Which agent ran which tests
+      - recon_context          # Open ports, subdomains, web tech, DNS records
+      - merged_endpoints       # Combined recon + SAST endpoint map
+      - endpoint_discovery_summary  # Total, by source, unauthenticated, admin
+      - chain_results          # Confirmed/refuted/emergent chains
+    outputs:
+      - report_markdown_path   # Main assessment report .md
+      - sast_markdown_path     # SAST companion .md (already exists, referenced)
+      - cloud_markdown_path    # Cloud companion .md (from cloud-analysis, referenced — cloud scope only)
+      - identity_markdown_path # Identity companion .md (from identity-analysis, referenced — identity scope only)
+      - ai_markdown_path       # AI companion .md (from ai-analysis, referenced — ai scope only)
+
+  report-enrichment:
+    description: "Validate report completeness against CLAUDE.md standards and fix gaps"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # mechanical agent → Sonnet (token tiering; runtime source is .claude/agents/report-enrichment.md frontmatter)
+    tests: []  # No test IDs — validation and enrichment only
+    count: 0
+    checkpoint_file: "reports/report-enrichment-results.json"
+    inputs:
+      - report_markdown_path
+      - sast_markdown_path
+      - all_finding_ids
+      - repo_paths
+      - targets
+      - auth_token
+    outputs:
+      - enriched_report_markdown_path  # Same path, report edited in-place
+      - enrichment_results             # Validation pass/fail for each check
+
+  cloud-recon:
+    description: "Cloud infrastructure reconnaissance and asset enumeration"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # mechanical agent → Sonnet (token tiering; runtime source is .claude/agents/cloud-recon.md frontmatter)
+    tests:
+      # Asset Discovery (4)
+      - CLOUD-01  # Cloud account enumeration
+      - CLOUD-02  # Public cloud asset discovery
+      - CLOUD-03  # Cloud network mapping
+      - CLOUD-04  # Cloud endpoint discovery
+      # IAM Enumeration (2)
+      - CLOUD-05  # IAM policy analysis
+      - CLOUD-10  # Credential exposure and rotation
+      # Storage Enumeration (2)
+      - CLOUD-11  # Storage bucket permissions
+      - CLOUD-12  # Public snapshot exposure
+      # Compute (2)
+      - CLOUD-16  # Instance metadata access
+      - CLOUD-20  # Compute network exposure
+      # Kubernetes (3)
+      - CLOUD-21  # K8s RBAC analysis
+      - CLOUD-25  # K8s API server security
+      - CLOUD-26  # Container image CVEs
+      # Logging (2)
+      - CLOUD-27  # Security logging verification
+      - CLOUD-28  # Alert configuration
+    count: 15
+    applies_when: "cloud_accounts defined in scope.yml"
+    checkpoint_file: "reports/cloud-recon-results.json"
+    inputs:
+      - cloud_accounts  # From scope.yml
+      - kubernetes       # From scope.yml
+    outputs:
+      - cloud_inventory
+      - iam_findings
+      - public_assets
+      - network_map
+      - k8s_inventory
+
+  cloud-exploit:
+    description: "Cloud infrastructure exploitation — IAM privesc, storage abuse, K8s attacks"
+    subagent_type: "general-purpose"
+    tests:
+      # IAM Exploitation (4)
+      - CLOUD-06  # IAM privilege escalation
+      - CLOUD-07  # Cross-account trust analysis
+      - CLOUD-08  # Service account permissions
+      - CLOUD-09  # MFA enforcement
+      # Storage Exploitation (3)
+      - CLOUD-13  # Encryption at rest
+      - CLOUD-14  # Secrets management exploitation
+      - CLOUD-15  # Sensitive data in storage
+      # Compute/Serverless (3)
+      - CLOUD-17  # Lambda/Function security
+      - CLOUD-18  # API Gateway bypass
+      - CLOUD-19  # Container registry exposure
+      # Kubernetes (2)
+      - CLOUD-22  # K8s secrets extraction
+      - CLOUD-23  # Container escape testing
+      - CLOUD-24  # K8s network segmentation
+      # Detection (1)
+      - CLOUD-29  # Log tampering test
+    count: 14
+    applies_when: "cloud_accounts defined in scope.yml"
+    checkpoint_file: "reports/cloud-exploit-results.json"
+    inputs:
+      - cloud_inventory    # From cloud-recon
+      - iam_findings       # From cloud-recon
+      - network_map        # From cloud-recon
+      - k8s_inventory      # From cloud-recon
+      - auth_token         # From team-lead
+    outputs:
+      - cloud_exploit_findings
+      - privesc_paths
+      - k8s_exploit_findings
+
+  cloud-analysis:
+    description: "Cloud analysis: synthesize the Cloud Companion Report (escalation graph, cloud chains) from cloud-recon/exploit checkpoints — analysis only, never re-scans"
+    subagent_type: "general-purpose"
+    tests: []  # No test IDs — Cloud Companion Report synthesis only
+    count: 0
+    applies_when: "cloud_accounts defined in scope.yml"
+    checkpoint_file: "reports/cloud-analysis-results.json"
+    inputs:
+      - cloud_finding_ids   # Cloud findings from cloud-recon + cloud-exploit (CLOUD-01..29)
+      - cloud_inventory     # From cloud-recon
+      - iam_findings        # From cloud-recon
+      - network_map         # From cloud-recon
+      - k8s_inventory       # From cloud-recon
+      - cloud_exploit_findings  # From cloud-exploit
+      - privesc_paths       # From cloud-exploit (drives the escalation graph)
+      - k8s_exploit_findings    # From cloud-exploit
+      - chain_results       # From chain-analysis (cloud chains CHAIN-31..40)
+      - severity_calibration  # From severity-calibrator (optional — dual severity)
+    outputs:
+      - cloud_report_path   # Path to Cloud Companion Report markdown
+
+  identity-recon:
+    description: "Identity reconnaissance — AD/Entra/M365 enumeration (deterministic, the continuous tier)"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # mechanical agent → Sonnet (token tiering; runtime source is .claude/agents/identity-recon.md frontmatter)
+    tests:
+      # Active Directory recon (5)
+      - IDENTITY-01  # AD domain enumeration
+      - IDENTITY-02  # BloodHound graph collection
+      - IDENTITY-03  # Kerberoast/AS-REP candidate enumeration
+      - IDENTITY-04  # ADCS vulnerable template enumeration
+      - IDENTITY-05  # AD trust enumeration
+      # Entra ID recon (5)
+      - IDENTITY-16  # Tenant fingerprint (unauthenticated)
+      - IDENTITY-17  # User/email enumeration
+      - IDENTITY-18  # Directory enumeration
+      - IDENTITY-19  # Conditional Access enumeration
+      - IDENTITY-20  # OAuth app/SP grant enumeration
+      # M365 / Entra hygiene recon (3)
+      - IDENTITY-35  # MFA coverage sweep
+      - IDENTITY-36  # Legacy auth protocol exposure
+      - IDENTITY-37  # Stale/over-privileged roles
+      # Okta recon (5) — runs only when an okta target is in scope
+      - IDENTITY-41  # Okta org fingerprint (unauthenticated)
+      - IDENTITY-42  # Okta user enumeration
+      - IDENTITY-43  # Okta OAuth app/scope enumeration
+      - IDENTITY-44  # Okta privileged role enumeration
+      - IDENTITY-45  # Okta policy gap analysis
+      # Google Workspace recon (3) — google_workspace scope only
+      - IDENTITY-51  # GWS domain fingerprint (unauthenticated)
+      - IDENTITY-52  # GWS user enumeration
+      - IDENTITY-53  # GWS privileged role enumeration
+      # Ping recon (2) — ping scope only
+      - IDENTITY-57  # Ping org fingerprint (unauthenticated)
+      - IDENTITY-58  # Ping user enumeration
+    count: 23
+    applies_when: "identity_targets defined in scope.yml"
+    checkpoint_file: "reports/identity-recon-results.json"
+    inputs:
+      - identity_targets  # From scope.yml
+      - identity_credentials  # Brokered by team-lead (domain creds / Entra SP / device-code token)
+    outputs:
+      - ad_inventory      # BloodHound graph digest, kerberoast/asrep candidates, ADCS templates
+      - entra_inventory   # Users, SPs, app grants, CA policies
+      - m365_surface      # Reachable M365 services + MFA coverage
+      - identity_findings
+
+  identity-exploit:
+    description: "Identity exploitation — AD (Kerberoast/DCSync/ADCS/delegation), Entra (spray/consent/PRT), M365 (mailbox/SharePoint/Teams exfil)"
+    subagent_type: "general-purpose"
+    tests:
+      # Active Directory exploitation (10)
+      - IDENTITY-06  # Kerberoasting + crack
+      - IDENTITY-07  # AS-REP roasting + crack
+      - IDENTITY-08  # AD password spray (lockout-gated)
+      - IDENTITY-09  # ACL abuse (GenericAll/WriteDACL)
+      - IDENTITY-10  # DCSync
+      - IDENTITY-11  # Delegation abuse (unconstrained/constrained/RBCD)
+      - IDENTITY-12  # ADCS ESC1-13 exploitation
+      - IDENTITY-13  # LAPS password read
+      - IDENTITY-14  # NTLM/SMB relay (MITM, user-confirm)
+      - IDENTITY-15  # Golden/Silver ticket forge
+      # Entra ID exploitation (8)
+      - IDENTITY-21  # Entra password spray (lockout-gated)
+      - IDENTITY-22  # Illicit consent grant abuse
+      - IDENTITY-23  # Device-code phishing
+      - IDENTITY-24  # Token theft/replay
+      - IDENTITY-25  # Conditional Access bypass
+      - IDENTITY-26  # Service principal abuse
+      - IDENTITY-27  # Primary Refresh Token abuse
+      - IDENTITY-28  # Cross-tenant/guest abuse
+      # M365 / O365 exploitation (6)
+      - IDENTITY-29  # Mailbox access (Graph)
+      - IDENTITY-30  # SharePoint/OneDrive exfil
+      - IDENTITY-31  # Teams data access
+      - IDENTITY-32  # eDiscovery abuse
+      - IDENTITY-33  # App-registration persistence
+      - IDENTITY-34  # AADInternals Golden SAML / sync abuse
+      # Hybrid bridges (3)
+      - IDENTITY-38  # AD Connect / sync account abuse
+      - IDENTITY-39  # On-prem DA → Entra GA (Golden SAML)
+      - IDENTITY-40  # Secret-in-code → AD foothold (cross-domain)
+      # Okta exploitation (5) — okta scope only
+      - IDENTITY-46  # Okta password spray (lockout-aware)
+      - IDENTITY-47  # Okta MFA factor analysis
+      - IDENTITY-48  # Okta OAuth consent abuse
+      - IDENTITY-49  # Okta token replay
+      - IDENTITY-50  # Okta SAML/OIDC weakness
+      # Google Workspace exploitation (3) — google_workspace scope only
+      - IDENTITY-54  # GWS OAuth + domain-wide delegation abuse
+      - IDENTITY-55  # GWS SAML/SSO weakness
+      - IDENTITY-56  # GWS token replay
+      # Ping exploitation (2) — ping scope only
+      - IDENTITY-59  # Ping OAuth app/consent abuse
+      - IDENTITY-60  # Ping SAML/OIDC weakness
+    count: 37
+    applies_when: "identity_targets defined in scope.yml"
+    checkpoint_file: "reports/identity-exploit-results.json"
+    inputs:
+      - ad_inventory          # From identity-recon
+      - entra_inventory       # From identity-recon
+      - m365_surface          # From identity-recon
+      - identity_findings     # From identity-recon
+      - identity_credentials  # Brokered by team-lead
+    outputs:
+      - identity_exploit_findings
+      - cracked_credentials
+      - privesc_paths
+      - forged_tokens
+
+  identity-analysis:
+    description: "Identity analysis: synthesize the Identity Companion Report (AD/Entra escalation graph, identity chains) from identity-recon/exploit checkpoints — analysis only, never re-scans or re-sprays"
+    subagent_type: "general-purpose"
+    tests: []  # No test IDs — Identity Companion Report synthesis only
+    count: 0
+    applies_when: "identity_targets defined in scope.yml"
+    checkpoint_file: "reports/identity-analysis-results.json"
+    inputs:
+      - identity_finding_ids    # Identity findings from identity-recon + identity-exploit (IDENTITY-01..60, per-provider gated)
+      - ad_inventory            # From identity-recon
+      - entra_inventory         # From identity-recon
+      - m365_surface            # From identity-recon
+      - identity_exploit_findings  # From identity-exploit
+      - cracked_credentials     # From identity-exploit
+      - privesc_paths           # From identity-exploit (drives the escalation graph)
+      - forged_tokens           # From identity-exploit
+      - chain_results           # From chain-analysis (identity chains CHAIN-41..50)
+      - severity_calibration    # From severity-calibrator (optional — dual severity)
+    outputs:
+      - identity_report_path    # Path to Identity Companion Report markdown
+
+  ai-recon:
+    description: "AI reconnaissance — model/provider/framework fingerprint, exposed-tool enumeration, untrusted-input surface map, guardrail detection (deterministic, the continuous tier)"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # mechanical agent → Sonnet (runtime source is .claude/agents/ai-recon.md frontmatter)
+    tests:
+      - AI-RECON-01  # Model / provider / framework fingerprint
+      - AI-RECON-02  # Exposed tool / function enumeration (agent/mcp_server)
+      - AI-RECON-03  # Untrusted-input surface map
+      - AI-RECON-04  # Guardrail detection
+      - AI-RECON-05  # Cross-kind capability auto-detection (declared ∪ detected → expands the test set)
+    count: 5
+    applies_when: "ai_targets defined in scope.yml"
+    checkpoint_file: "reports/ai-recon-results.json"
+    inputs:
+      - ai_targets         # From scope.yml
+      - auth_headers       # Per-target auth brokered by team-lead
+    outputs:
+      - input_surface_map      # Every place attacker-controlled data enters the context window
+      - model_fingerprint      # Model, provider, framework
+      - exposed_tools          # For agent/mcp_server targets (excessive-agency blast radius)
+      - guardrails             # Declared + observed filters
+      - detected_capabilities  # AI-RECON-05: kinds the target actually behaves like (declared ∪ detected) — expands the in-scope AI tests
+      - ai_findings            # Includes undeclared-capability findings (source: ai_capability_detection)
+
+  ai-redteam:
+    description: "AI exploitation — prompt injection (direct + indirect), jailbreak, system-prompt extraction, sensitive disclosure, improper output handling (owns the sink), excessive agency (capability-not-execution), RAG isolation/poisoning, MCP tool-poisoning, consumption probe"
+    subagent_type: "general-purpose"
+    tests:
+      # Prompt injection / jailbreak (4)
+      - AI-PI-01    # Direct prompt injection
+      - AI-PI-02    # Indirect prompt injection (agent/rag_app/mcp_server)
+      - AI-PI-03    # Jailbreak battery
+      - AI-GB-01    # Guardrail bypass
+      # Disclosure (5)
+      - AI-SPL-01   # System-prompt extraction
+      - AI-SPL-02   # Tool-schema / function-definition leakage (agent/mcp_server)
+      - AI-SID-01   # Sensitive information disclosure
+      - AI-SID-02   # PII leakage in output
+      - AI-MIS-01   # Misinformation / overreliance
+      # Output handling (2)
+      - AI-OH-01    # Improper output handling → downstream sink
+      - AI-OH-02    # Markdown / link injection in output
+      # Excessive agency (2)
+      - AI-EA-01    # Excessive agency / tool-call coercion
+      - AI-EA-02    # Multi-tool chain escalation (agent)
+      # Consumption (1)
+      - AI-DOS-01   # Unbounded consumption probe (probe-only)
+      # RAG (2) — rag_app scope only
+      - AI-RAG-01   # RAG tenant-isolation / retrieval leak
+      - AI-POI-01   # Retrieval / data-poisoning influence (non-persistent)
+      # MCP-server (2) — mcp_server scope only
+      - AI-MCP-01   # MCP tool-description poisoning
+      - AI-MCP-02   # MCP confused-deputy
+    count: 18
+    applies_when: "ai_targets defined in scope.yml"
+    checkpoint_file: "reports/ai-redteam-results.json"
+    inputs:
+      - ai_targets
+      - auth_headers
+      - input_surface_map      # From ai-recon
+      - model_fingerprint      # From ai-recon
+      - exposed_tools          # From ai-recon
+      - guardrails             # From ai-recon
+      - detected_capabilities  # From ai-recon (AI-RECON-05) — run the tests for every detected capability, not just the declared kind
+    outputs:
+      - ai_exploit_findings
+      - injection_successes  # Per-test success-rate (k/N trials)
+      - captured_tool_calls  # Excessive-agency evidence (captured, not executed)
+
+  ai-analysis:
+    description: "AI analysis: synthesize the AI Companion Report (OWASP LLM Top 10 + MITRE ATLAS, injection-surface map, excessive-agency graph) from ai-recon/ai-redteam checkpoints — analysis only, never re-attacks"
+    subagent_type: "general-purpose"
+    tests: []  # No test IDs — AI Companion Report synthesis only
+    count: 0
+    applies_when: "ai_targets defined in scope.yml"
+    checkpoint_file: "reports/ai-analysis-results.json"
+    inputs:
+      - ai_finding_ids        # AI findings from ai-recon + ai-redteam (AI-* )
+      - input_surface_map     # From ai-recon
+      - model_fingerprint     # From ai-recon
+      - exposed_tools         # From ai-recon
+      - ai_exploit_findings   # From ai-redteam
+      - injection_successes   # From ai-redteam (success-rate columns)
+      - captured_tool_calls   # From ai-redteam (drives the excessive-agency graph)
+      - chain_results         # From chain-analysis (AI injection→sink chains)
+      - severity_calibration  # From severity-calibrator (optional — dual severity)
+    outputs:
+      - ai_report_path        # Path to the AI Companion Report markdown
+
+  pdf-renderer:
+    description: "Render markdown reports to PDF and register them in the cloud Reports page"
+    subagent_type: "general-purpose"
+    model: claude-sonnet-4-6  # mechanical agent → Sonnet (token tiering; runtime source is .claude/agents/pdf-renderer.md frontmatter)
+    tests: []  # No test IDs — PDF rendering only
+    count: 0
+    # pdf-renderer produces PDFs, not a results.json — manifest check
+    # uses report_pdf_path/sast_pdf_path outputs instead. Each PDF must
+    # ALSO have a corresponding row in the cloud /reports endpoint (the
+    # MCP `generate_pdf_report` tool POSTs there when assessment_id is
+    # supplied). Without that POST, the desktop Reports page shows
+    # "No Reports Yet" even though the PDFs are on disk.
+    checkpoint_file: null
+    inputs:
+      - report_markdown_path
+      - sast_markdown_path
+      - cloud_markdown_path     # Cloud companion .md (present only in cloud scope; skip render if absent)
+      - identity_markdown_path  # Identity companion .md (present only in identity scope; skip render if absent)
+      - ai_markdown_path        # AI companion .md (present only in ai scope; skip render if absent)
+      - assessment_id    # REQUIRED — UUID of the cloud assessments row
+    outputs:
+      - report_pdf_path
+      - sast_pdf_path
+      - cloud_pdf_path
+      - identity_pdf_path
+      - ai_pdf_path
+      - report_cloud_uploaded  # boolean — true when /reports POST succeeded
+      - sast_cloud_uploaded    # boolean — true when /reports POST succeeded
+      - cloud_cloud_uploaded   # boolean — true when /reports POST succeeded (cloud companion)
+      - identity_cloud_uploaded  # boolean — true when /reports POST succeeded (identity companion)
+      - ai_cloud_uploaded      # boolean — true when /reports POST succeeded (AI companion)
+
+# Verification rules
+verification:
+  # `matrix_total` is the full size of config/test-matrix.yml (every test ever defined).
+  # The number the lead actually verifies against is the SCOPE-DERIVED in-scope count,
+  # computed at runtime from each test's `applies_when` gate vs the active scope — NOT a
+  # fixed number. Never hardcode the per-run denominator anywhere; it changes with scope
+  # (cloud_accounts, identity provider targets, kubernetes clusters, repo_paths) and grows
+  # as the matrix gains tests. See in_scope_rule below and skills/team-assessment/SKILL.md.
+  matrix_total: 232  # full matrix: 73 DAST + 24 SAST + 15 XVAL + 8 CHAIN + 29 CLOUD + 60 IDENTITY + 23 AI (informational only)
+  in_scope_count: "derive at runtime from test-matrix applies_when vs scope — do not hardcode"
+  in_scope_rule: >
+    A test is in scope when (1) it has no applies_when (always-on base), or (2) its
+    applies_when names a configured scope dimension (cloud_accounts / an identity provider
+    target / ai_targets (+ kind gates — a kind counts in-scope when DECLARED or DETECTED
+    by AI-RECON-05) / kubernetes / repo_paths), or (3) it is a surface-discovery gate
+    (status N_A when the surface is absent, but still in scope).
+    Tests gated on an unconfigured scope dimension are out of scope: report them in an
+    "Out of Scope (N_A)" appendix, excluded from the active denominator.
+  total_agents: 22  # 1 lead + 21 workers (cloud + identity + ai agents conditional on scope)
+  status_values: ["PASS", "FAIL", "N_A", "BLOCKED"]
+  banned_statuses: ["SKIPPED"]
+  lead_must_verify_before_report: true
+  lead_passes_to_report: ["IN_SCOPE_TEST_IDS", "IN_SCOPE_TEST_COUNT"]  # the scope-derived set + count
+  missing_test_recovery: "Lead runs missing tests directly or re-spawns agent"

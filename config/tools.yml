@@ -1,0 +1,275 @@
+# Tool Configurations
+
+nmap:
+  default_ports: "1-1000"
+  timing_template: 4
+  max_rate: 1000
+
+nuclei:
+  templates:
+    - "cve"
+    - "owasp-top-10"
+    - "vulnerabilities"
+    - "misconfiguration"
+  severity: "medium,high,critical"
+  rate_limit: 150
+  bulk_size: 25
+  concurrency: 25
+
+sqlmap:
+  level: 2
+  risk: 1  # Keep low for safety
+  threads: 4
+  technique: "BEUSTQ"
+
+ffuf:
+  wordlist: "/opt/pentest/wordlists/common.txt"
+  rate: 100
+  timeout: 10
+
+metasploit:
+  check_mode: true
+  threads: 4
+
+# --- SSL/TLS Tools ---
+testssl:
+  timeout: 60
+  severity: "LOW,MEDIUM,HIGH,CRITICAL"
+  protocols: true
+  ciphers: true
+  vulnerabilities: true
+
+sslscan:
+  timeout: 30
+
+# --- DNS Security Tools ---
+dns:
+  timeout: 10
+  record_types:
+    - A
+    - AAAA
+    - MX
+    - TXT
+    - CNAME
+    - NS
+    - SOA
+    - SRV
+    - CAA
+
+# --- Token Security Tools ---
+jwt:
+  brute_force_timeout: 30
+  common_secrets_list: "/opt/pentest/wordlists/jwt-secrets.txt"
+  test_alg_none: true
+  test_key_confusion: true
+
+# --- Advanced Web Tools ---
+cors:
+  timeout: 10
+  test_origins:
+    - "https://evil.com"
+    - "null"
+    - "https://attacker.example.com"
+
+ssrf:
+  timeout: 10
+  cloud_metadata_ips:
+    - "169.254.169.254"  # AWS/Azure
+    - "metadata.google.internal"  # GCP
+  internal_ips:
+    - "127.0.0.1"
+    - "0.0.0.0"
+    - "10.0.0.1"
+    - "192.168.1.1"
+
+ssti:
+  timeout: 10
+  engines:
+    - jinja2
+    - twig
+    - velocity
+    - erb
+    - freemarker
+    - pebble
+
+http_smuggling:
+  timeout: 15
+  techniques:
+    - "CL.TE"
+    - "TE.CL"
+    - "TE.TE"
+
+race_condition:
+  concurrent_requests: 10
+  timeout: 30
+
+cache_poisoning:
+  timeout: 10
+  unkeyed_headers:
+    - "X-Forwarded-Host"
+    - "X-Original-URL"
+    - "X-Rewrite-URL"
+    - "X-Forwarded-Scheme"
+
+websocket:
+  timeout: 10
+  test_origins:
+    - "https://evil.com"
+    - "null"
+
+# --- API Security Tools ---
+graphql:
+  max_depth: 10
+  max_aliases: 100
+  batch_size: 10
+  timeout: 15
+
+api_fuzzing:
+  max_fuzz_per_endpoint: 10
+  timeout: 30
+
+rate_limiting:
+  requests_per_test: 50
+  burst_delay_ms: 0
+  timeout: 30
+
+idor:
+  enum_count: 20
+  timeout: 15
+
+# --- Cloud Security Tools ---
+cloud_metadata:
+  timeout: 5
+  providers:
+    - aws
+    - azure
+    - gcp
+
+s3_bucket:
+  timeout: 10
+  test_operations:
+    - list
+    - read
+    - write
+    - acl
+
+# --- Cloud Red Team Tools ---
+scoutsuite:
+  timeout: 600           # 10 minutes — full account scan takes time
+  max_workers: 10
+  services:
+    aws: ["iam", "s3", "ec2", "lambda", "rds", "ecs", "eks", "secretsmanager", "sqs", "sns", "cloudtrail", "guardduty", "vpc"]
+    azure: ["aad", "storageaccounts", "virtualmachines", "keyvault", "appservice", "sqldatabase", "network"]
+    gcp: ["iam", "gce", "gcs", "cloudfunctions", "gke", "cloudsql", "cloudresourcemanager"]
+
+prowler:
+  timeout: 600
+  severity: "critical,high"
+  output_format: "json"
+  checks:
+    aws: []              # Empty = all checks
+    azure: []
+    gcp: []
+
+cloudfox:
+  timeout: 300
+  commands:
+    - "all-checks"
+    - "iam-simulator"
+    - "permissions"
+    - "endpoints"
+    - "env-vars"
+    - "instances"
+
+pmapper:
+  timeout: 300
+  analysis_type: "privesc"
+
+pacu:
+  timeout: 300
+  modules:
+    - "iam__enum_permissions"
+    - "iam__privesc_scan"
+    - "lambda__enum"
+    - "ec2__enum"
+    - "s3__enum"
+
+cloud_enum:
+  timeout: 120
+  brute_force: false
+
+s3scanner:
+  timeout: 120
+
+# --- Kubernetes Security Tools ---
+kube_hunter:
+  timeout: 120
+  active: true           # Enable active hunting (exploitation attempts)
+  report_format: "json"
+
+trivy:
+  timeout: 120
+  severity: "CRITICAL,HIGH"
+  ignore_unfixed: false
+  scan_types:
+    - "vuln"
+    - "config"
+    - "secret"
+
+kubeaudit:
+  timeout: 60
+  checks:
+    - "all"
+
+kubectl:
+  timeout: 30
+
+cdk:
+  timeout: 60
+  evaluate: true         # Run CDK evaluate for escape vectors
+
+# --- Session Security Tools ---
+session:
+  timeout: 10
+  entropy_threshold: 64  # bits
+  concurrent_sessions_limit: 5
+
+password_policy:
+  timeout: 10
+  test_passwords:
+    - "password"
+    - "123456"
+    - "qwerty"
+    - "admin"
+
+# --- File/Deserialization Security Tools ---
+file_upload:
+  timeout: 15
+  test_extensions:
+    - ".php"
+    - ".jsp"
+    - ".aspx"
+    - ".py"
+    - ".sh"
+    - ".svg"
+    - ".html"
+
+deserialization:
+  timeout: 15
+  formats:
+    - java
+    - python
+    - php
+    - dotnet
+
+# --- WAF Bypass ---
+waf_bypass:
+  techniques:
+    - url_encode
+    - double_encode
+    - unicode
+    - hex
+    - html_entity
+    - mixed_case
+    - sql_comment
+    - xss

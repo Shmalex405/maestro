@@ -1,0 +1,74 @@
+{
+  "_comment": "Ground-truth + integrity expectations for the LLM-ORCHESTRATED proving run (assert.mjs llm mode). Unlike expectations.json (deterministic engine, exact-ish floors), the LLM path is nondeterministic, so most signals are RANGES/soft and only a few load-bearing invariants hard-fail: the rock-solid must-finds, provenance integrity, and the trace-integrity block (no faked PASS, real fan-out). Tighten ranges from real numbers after the first paid proving run.",
+
+  "minimums": {
+    "_comment": "An LLM run drives the full agent team and should find clearly MORE than the deterministic engine. from_dast_required:true — the LLM reliably produces web findings (it is the product path, not the secondary engine).",
+    "total_findings": 8,
+    "from_dast_source": 1,
+    "from_dast_required": true,
+    "from_sast_source": 1
+  },
+
+  "ranges": {
+    "_comment": "Soft — reported, not hard-failed (except where mirrored in llm_integrity). Calibrate from the first real run.",
+    "subagent_spawns": { "min": 3 },
+    "distinct_tools": { "min": 10 },
+    "tool_executions": { "min": 40 },
+    "findings_total": { "min": 8, "soft_max": 400 }
+  },
+
+  "dast_sources": ["run_nuclei", "run_nikto", "run_sqlmap", "test_cors", "test_xss", "test_idor", "web_technology_scan", "fuzz_endpoints", "test_session_management", "analyze_jwt", "test_token_replay", "test_ssrf", "test_ssti", "scan_ports"],
+  "sast_sources": ["scan_semgrep", "scan_njsscan", "scan_bandit", "scan_secrets", "scan_dependencies", "scan_iac"],
+
+  "unauth": [
+    {
+      "id": "juiceshop-missing-security-headers",
+      "required": true,
+      "match": ["header"],
+      "note": "Juice Shop ships without a proper CSP / security headers — the LLM web-security agent must surface this."
+    },
+    {
+      "id": "juiceshop-injection",
+      "required": false,
+      "match": ["injection"],
+      "note": "SQL/NoSQL injection — the LLM should exploit it, but title wording varies; informational until a live run confirms."
+    }
+  ],
+
+  "authed": [
+    {
+      "id": "juiceshop-idor-or-broken-access",
+      "required": false,
+      "match": ["idor"],
+      "note": "Authorization/IDOR — proves the authed path produced a result. Informational until a live run confirms the exact title."
+    }
+  ],
+
+  "sast": [
+    {
+      "id": "nodegoat-code-vuln",
+      "required": true,
+      "match_any_source": ["semgrep", "njsscan", "scan_semgrep"],
+      "note": "NodeGoat is deliberately vulnerable — a SAST scanner MUST produce at least one finding against it."
+    }
+  ],
+
+  "llm_integrity": {
+    "_comment": "The differentiator, hard-failed. require_no_faked_pass: no checkpoint may claim PASS for a scanner-backed test whose scanner never appeared in the whole multi-agent trace. require_non_degenerate: the agent team must actually fan out (not a single-context run). require_min_subagents: floor on real subagent spawns.",
+    "require_no_faked_pass": true,
+    "require_non_degenerate": true,
+    "require_min_subagents": 3
+  },
+
+  "agents": {
+    "_comment": "Full check on the AGENTS (consumes trace.checkpointAgents — the agents that actually wrote a reports/{agent}-results.json). `expected` = the roster the FULL-SURFACE hybrid eval should fan out (web/SAST core + the Groovy-gated cloud/identity/AI trios); reported as ran/missing, never hard-failed. `require` = the subset whose absence means the run is broken; hard-fails. The surface trios are in `expected` now so the roster line shows the wiring gap honestly: on the web/SAST-only proving run (P0.5, before Groovy is wired) they correctly report MISSING while `require` (core) still passes green. PROMOTE the surface recon agents (cloud-recon, identity-recon, ai-recon) into `require` once P1 wires the Groovy cloud/identity/ai targets and the first run confirms they fan out. report-writer + pdf-renderer are intentionally absent — they emit a report/PDF, not a *-results.json checkpoint, so they're verified by output, not this roster.",
+    "expected": [
+      "recon-infra", "sast-scan", "sast-analysis", "web-security", "api-graphql",
+      "chain-analysis", "crossval-qa", "severity-calibrator", "compliance", "report-enrichment",
+      "cloud-recon", "cloud-exploit", "cloud-analysis",
+      "identity-recon", "identity-exploit", "identity-analysis",
+      "ai-recon", "ai-redteam", "ai-analysis"
+    ],
+    "require": ["recon-infra", "sast-scan", "web-security", "api-graphql"]
+  }
+}

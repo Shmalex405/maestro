@@ -1,0 +1,112 @@
+# =============================================================================
+# Post-exploitation action library — capability → technique → tool (ATT&CK-keyed).
+# =============================================================================
+# The companion to config/chain-patterns.yml's `vuln_capability_map`. That map
+# covers actions that ARE vuln-findings; this covers post-foothold TECHNIQUES that
+# are not findings ("Kerberoast from a domain foothold", "enumerate S3 with
+# harvested creds"). The post-exploit-operator reads this to know what moves its
+# currently-held capabilities ENABLE — the planner's candidate edges (RFC §5.4):
+# an action is available when its `requires` ⊆ the operator's held capabilities.
+#
+# Each entry: requires (preconditions ⊆ held), grants (capabilities yielded),
+# technique (what it does), tool (how), attack_id (MITRE ATT&CK). Non-destructive
+# by construction — every technique below reads/forges/assumes, never destroys.
+# =============================================================================
+
+postex_techniques:
+
+  # ── Network / host pivot ──────────────────────────────────────────────────
+  internal_port_scan:
+    requires: [internal_network_access]
+    grants: [internal_service_map]
+    technique: "Enumerate services reachable from the foothold's network position"
+    tool: nmap
+    attack_id: T1046
+
+  read_imds_credentials:
+    requires: [ssrf_request]            # or command_execution on a cloud host
+    grants: [cloud_credential_harvest]
+    technique: "Read cloud instance metadata (IMDS) for attached role credentials"
+    tool: curl
+    attack_id: T1552.005
+
+  read_local_secrets:
+    requires: [file_read]
+    grants: [credential_theft]
+    technique: "Read on-disk secrets (.env, config, key material, history files)"
+    tool: cat
+    attack_id: T1552.001
+
+  # ── Credential use / lateral movement ─────────────────────────────────────
+  reuse_harvested_credential:
+    requires: [credential_theft, internal_service_map]
+    grants: [authenticated_session, lateral_movement]
+    technique: "Authenticate to an adjacent service with a harvested credential"
+    tool: curl
+    attack_id: T1078
+
+  token_replay:
+    requires: [token_forgery]            # or a stolen bearer/session token
+    grants: [authenticated_session]
+    technique: "Replay a stolen/forged token against the API as the victim"
+    tool: curl
+    attack_id: T1550.001
+
+  # ── Cloud ─────────────────────────────────────────────────────────────────
+  assume_cross_account_role:
+    requires: [cloud_credential_harvest]
+    grants: [iam_admin_access, lateral_movement]
+    technique: "sts assume-role into a trusting account/role"
+    tool: aws
+    attack_id: T1078.004
+
+  read_cloud_secrets:
+    requires: [cloud_credential_harvest]
+    grants: [cloud_secrets_read, credential_theft]
+    technique: "Read Secrets Manager / Key Vault / Secret Manager entries with held creds"
+    tool: aws
+    attack_id: T1552.007
+
+  enumerate_cloud_storage:
+    requires: [cloud_credential_harvest]
+    grants: [cloud_storage_read, data_exfiltration]
+    technique: "List + read S3 / blob / GCS objects reachable from the held identity"
+    tool: aws
+    attack_id: T1530
+
+  # ── Identity / Active Directory ───────────────────────────────────────────
+  kerberoast:
+    requires: [domain_credentials]
+    grants: [service_account_hashes, credential_theft]
+    technique: "Request SPN tickets and extract crackable service-account hashes"
+    tool: GetUserSPNs
+    attack_id: T1558.003
+
+  dcsync:
+    requires: [domain_replication_rights]   # acquired e.g. via privilege_escalation
+    grants: [domain_admin, credential_theft]
+    technique: "Replicate directory secrets (incl. krbtgt) from a DC"
+    tool: secretsdump
+    attack_id: T1003.006
+
+  pass_the_hash:
+    requires: [credential_theft, internal_service_map]
+    grants: [authenticated_session, lateral_movement]
+    technique: "Authenticate to a host with an NTLM hash (no plaintext needed)"
+    tool: impacket
+    attack_id: T1550.002
+
+  # ── Application / data ────────────────────────────────────────────────────
+  enumerate_objects_idor:
+    requires: [api_session, api_schema_knowledge]
+    grants: [pii_read, data_exfiltration]
+    technique: "Walk sequential/guessable object ids to read other tenants' records (BOLA)"
+    tool: curl
+    attack_id: T1213
+
+  account_takeover_via_mutation:
+    requires: [api_session]
+    grants: [account_takeover]
+    technique: "Invoke a sensitive mutation (reversible) to demonstrate account control"
+    tool: curl
+    attack_id: T1098
