@@ -102,13 +102,13 @@ not take that on trust from a binary. Read the code first — the tool handlers 
 `mcp-server/src/scope/`, the agent instructions in `.claude/agents/` — then
 install the signed build.
 
-**v1.12.0**
+**v1.13.0**
 
 | Platform | Download |
 |---|---|
-| macOS (Apple Silicon) | [Maestro_1.12.0_aarch64.dmg](https://updates.maestro.groovysec.com/maestro/free/macos-aarch64/Maestro_1.12.0_aarch64.dmg) |
-| Windows | [Maestro_1.12.0_x64_en-US.msi](https://updates.maestro.groovysec.com/maestro/free/windows-x64/Maestro_1.12.0_x64_en-US.msi) · [setup.exe](https://updates.maestro.groovysec.com/maestro/free/windows-x64/Maestro_1.12.0_x64-setup.exe) |
-| Linux | [.deb](https://updates.maestro.groovysec.com/maestro/free/linux-x64/Maestro_1.12.0_amd64.deb) · [.AppImage](https://updates.maestro.groovysec.com/maestro/free/linux-x64/Maestro_1.12.0_amd64.AppImage) |
+| macOS (Apple Silicon) | [Maestro_1.13.0_aarch64.dmg](https://updates.maestro.groovysec.com/maestro/free/macos-aarch64/Maestro_1.13.0_aarch64.dmg) |
+| Windows | [Maestro_1.13.0_x64_en-US.msi](https://updates.maestro.groovysec.com/maestro/free/windows-x64/Maestro_1.13.0_x64_en-US.msi) · [setup.exe](https://updates.maestro.groovysec.com/maestro/free/windows-x64/Maestro_1.13.0_x64-setup.exe) |
+| Linux | [.deb](https://updates.maestro.groovysec.com/maestro/free/linux-x64/Maestro_1.13.0_amd64.deb) · [.AppImage](https://updates.maestro.groovysec.com/maestro/free/linux-x64/Maestro_1.13.0_amd64.AppImage) |
 
 These are the **free** builds: they default to local mode, so there is no
 account, no licence key and no sign-in. (The `latest` channel on the same CDN is
@@ -123,7 +123,7 @@ which is also the authoritative list of released artifacts.
 You also need **Docker** running, plus the toolkit image:
 
 ```bash
-docker pull ghcr.io/shmalex405/docker-kali:v1.12.0
+docker pull ghcr.io/shmalex405/docker-kali:v1.13.0
 ```
 
 Roughly 15 GB, a few minutes. The app checks for it during startup and tells you
@@ -309,12 +309,12 @@ an appendix rather than silently skipped.
 
 ## The agent team
 
-A full-scope assessment runs up to **24 agents**: a team lead plus 23 specialized
+A full-scope assessment runs up to **25 agents**: a team lead plus 24 specialized
 workers. Each worker gets its own context window, which is the point — a single
 context runs out partway through and late-phase tests get silently dropped.
 
 Eleven workers are scope-conditional, so the count scales with what's in scope.
-Web/API/SAST alone is 13 agents; all five surfaces is 24.
+Web/API/SAST alone is 14 agents; all five surfaces is 25.
 
 Phases run in parallel where independent and sequentially where they depend on
 each other:

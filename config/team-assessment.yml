@@ -13,7 +13,7 @@
 #
 # See skills/team-assessment/SKILL.md for the full orchestration protocol.
 #
-# Matrix superset: 232 tests across up to 22 agents (1 lead + 21 workers).
+# Matrix superset: 234 tests across up to 25 agents (1 lead + 24 workers).
 # The per-run denominator is the SCOPE-DERIVED in-scope subset, not a fixed number
 # (see the `verification:` block at the bottom of this file). Counts below are the
 # full matrix for reference only.
@@ -22,7 +22,7 @@
 # Identity tests (60) + identity cross-validation (XVAL-14/15) execute only when
 #   identity_targets defined in scope.yml
 # Identity agents (identity-recon, identity-exploit, identity-analysis) run only in identity scope
-# AI tests (23) execute only when ai_targets defined in scope.yml
+# AI tests (25) execute only when ai_targets defined in scope.yml
 # AI agents (ai-recon, ai-redteam, ai-analysis) run only in ai scope
 # Severity-calibrator (0 tests) re-rates severity based on actual exploitation outcomes
 # cloud-analysis (0 tests) writes the Cloud Companion Report — analysis only, never re-scans

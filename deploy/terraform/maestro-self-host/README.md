@@ -77,9 +77,9 @@ REG="$ACCT.dkr.ecr.us-west-2.amazonaws.com"
 
 # from the application repo root
 docker build -t maestro-backend backend-rs/
-docker tag maestro-backend:latest "$REG/maestro-backend:1.12.0"
+docker tag maestro-backend:latest "$REG/maestro-backend:1.13.0"
 aws ecr get-login-password | docker login --username AWS --password-stdin "$REG"
-docker push "$REG/maestro-backend:1.12.0"
+docker push "$REG/maestro-backend:1.13.0"
 ```
 
 Set `container_image` to that URI. Because the repository is in the same account,

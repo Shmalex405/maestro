@@ -21,10 +21,10 @@ route53_zone_id = "Z1234567890ABC"
 # Backend image you built and pushed. Same-account ECR is simplest:
 #   aws ecr create-repository --repository-name maestro-backend
 #   docker build -t maestro-backend backend-rs/
-#   docker tag maestro-backend:latest <acct>.dkr.ecr.us-west-2.amazonaws.com/maestro-backend:1.12.0
+#   docker tag maestro-backend:latest <acct>.dkr.ecr.us-west-2.amazonaws.com/maestro-backend:1.13.0
 #   aws ecr get-login-password | docker login --username AWS --password-stdin <acct>.dkr.ecr.us-west-2.amazonaws.com
-#   docker push <acct>.dkr.ecr.us-west-2.amazonaws.com/maestro-backend:1.12.0
-container_image = "123456789012.dkr.ecr.us-west-2.amazonaws.com/maestro-backend:1.12.0"
+#   docker push <acct>.dkr.ecr.us-west-2.amazonaws.com/maestro-backend:1.13.0
+container_image = "123456789012.dkr.ecr.us-west-2.amazonaws.com/maestro-backend:1.13.0"
 
 # First admin. Cognito emails a temporary password here, so use a real address.
 admin_email = "security-admin@example.com"
