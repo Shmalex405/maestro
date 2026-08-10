@@ -32,6 +32,10 @@
 # ─── Trademark ───────────────────────────────────────────────────────────────
 # Apache-2.0 grants no trademark rights (§6), and these are unreferenced by the
 # build. A self-hoster wants their own mark or none.
+# The brand kit stays private: dark_logos/ is not a dark-mode variant, it holds
+# WHITEOUT AI logos, which have nothing to do with Maestro. The single asset the
+# README renders is committed separately at .github/assets/groovy-security.png —
+# it has to be in the tree or the image 404s for everyone viewing the repo.
 ^Groovy_Security_Logos/
 ^icononly_nobuffer\.png$
 

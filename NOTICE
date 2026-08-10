@@ -14,6 +14,22 @@ License. See COMMERCIAL-COMPONENTS for the authoritative list and
 LICENSE-COMMERCIAL for their terms.
 
 -------------------------------------------------------------------------------
+TRADEMARKS
+
+"Groovy Security", "Maestro", and the Groovy Security logo are trademarks of
+Groovy Security. Apache License 2.0 section 6 grants no trademark rights, and
+nothing in this NOTICE grants any either.
+
+You may say that your work is based on or derived from Maestro. You may not use
+the Groovy Security name or logo to name, brand, or promote a fork or derivative,
+or in any way implying that Groovy Security produced or endorses it. If you
+redistribute a modified version, remove .github/assets/groovy-security.png and
+give your version its own name.
+
+This is the ordinary open-core arrangement: the code is yours to use under its
+license, the branding is not.
+
+-------------------------------------------------------------------------------
 THIRD-PARTY SECURITY TOOLING
 
 The Maestro toolkit container image (docker/Dockerfile.kali) installs

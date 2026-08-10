@@ -1,6 +1,15 @@
+<p align="center">
+  <a href="https://groovysec.com">
+    <img src=".github/assets/groovy-security.png" alt="Groovy Security" height="90">
+  </a>
+</p>
+
 # Maestro
 
-**An autonomous penetration testing platform.** An LLM orchestrates a team of
+**An autonomous penetration testing platform**, built and maintained by
+[Groovy Security](https://groovysec.com). Free to use, source public and auditable.
+
+An LLM orchestrates a team of
 specialized security agents against systems you are authorized to test, driving
 **227 security tools** inside a Kali Linux container, and produces a report where
 every exploitable finding has been re-proven under a deterministic oracle.
@@ -495,7 +504,7 @@ technical necessity, not a license grant.
 
 | Path | What it is |
 |---|---|
-| `.claude/agents/` | The 23-agent prompt corpus — exploitation mandate, per-surface methodology, evidence standards |
+| `.claude/agents/` | The 24-agent prompt corpus — exploitation mandate, per-surface methodology, evidence standards |
 | `.claude/workflows/` | The three-chunk deterministic Workflow path |
 | `skills/` | Orchestration protocols, coverage accounting, report standards |
 | `mcp-server/src/verification/`, `mcp-server/src/tools/verification.ts` | The oracle verification layer |
@@ -623,3 +632,26 @@ for bugs in the open core.
 For the managed product — including the human-signed pentest attestation, Cyber
 Verification Program enrollment, and a hosted OAST listener —
 <support@groovysec.com>.
+
+---
+
+<p align="center">
+  <a href="https://groovysec.com">
+    <img src=".github/assets/groovy-security.png" alt="Groovy Security" height="64">
+  </a>
+</p>
+
+<p align="center">
+  Built by <a href="https://groovysec.com"><strong>Groovy Security</strong></a> —
+  <a href="https://groovysec.com/maestro">Maestro</a> ·
+  <a href="https://groovysec.com/maestro/install">Install</a> ·
+  <a href="https://groovysec.com">groovysec.com</a>
+  <br>
+  <sub>Enterprise-grade security testing should not be a function of your budget.</sub>
+  <br>
+  <sub>© 2026 Groovy Security. Apache-2.0 where marked — see
+  <a href="LICENSE">LICENSE</a>, <a href="NOTICE">NOTICE</a> and
+  <a href="COMMERCIAL-COMPONENTS">COMMERCIAL-COMPONENTS</a>. The Groovy Security
+  name and logo are trademarks and are not licensed with the code.</sub>
+</p>
+
