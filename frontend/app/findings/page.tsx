@@ -340,7 +340,7 @@ export default function FindingsPage() {
       if (!url) return '';
       // Strip protocol, then leading wildcard subdomains.
       // "https://*.groovysec.com" → "groovysec.com"
-      // "https://api.whiteout.groovysec.com" → "api.whiteout.groovysec.com"
+      // "https://api.example.com" → "api.example.com"
       let host = url.replace(/^https?:\/\//i, '');
       host = host.split('/')[0].split(':')[0];
       host = host.replace(/^\*\./, '');

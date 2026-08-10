@@ -37,10 +37,10 @@ It is deliberately a single instance, not an ASG: two servers would answer DNS w
 Interactsh must be *authoritative* for its own subdomain, so the parent zone delegates to it:
 
 ```
-oast.maestro.groovysec.com      NS   ns1.oast.maestro.groovysec.com
-                                     ns2.oast.maestro.groovysec.com
-ns1.oast.maestro.groovysec.com  A    <EIP>     ← glue, mandatory
-ns2.oast.maestro.groovysec.com  A    <EIP>     ← glue, mandatory
+oast.example.com      NS   ns1.oast.example.com
+                                     ns2.oast.example.com
+ns1.oast.example.com  A    <EIP>     ← glue, mandatory
+ns2.oast.example.com  A    <EIP>     ← glue, mandatory
 ```
 
 The glue is not optional: the nameservers for `oast.maestro…` live *inside* `oast.maestro…`, so without A records in the parent zone a resolver can never bootstrap the delegation.
@@ -68,8 +68,8 @@ sudo tail -f /var/log/interactsh.log
 Verify the delegation resolves before trusting it:
 
 ```bash
-dig +short NS oast.maestro.groovysec.com
-dig @<EIP> +short test.oast.maestro.groovysec.com
+dig +short NS oast.example.com
+dig @<EIP> +short test.oast.example.com
 ```
 
 ## Wiring it to Maestro

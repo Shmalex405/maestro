@@ -27,11 +27,6 @@ mcp-server/tests/verification/oracles.test.ts:generic-api-key:379
 # The report and methodology docs show what real evidence must look like, which
 # means they contain example `Authorization: Bearer <jwt>` requests. These are
 # illustrative payloads, not live credentials.
-#
-# NOTE: a real (now-expired) admin@groovysec.com token WAS committed to
-# CLAUDE.md and skills/assessment/SKILL.md in commit ee938764. Both have since
-# been edited and the current tree is clean — but it remains in git history.
-# See the history-cleanup work before publishing.
 
 docs/kali-mcp-overview.md:generic-api-key:411
 docs/kali-mcp-overview.md:curl-auth-header:417

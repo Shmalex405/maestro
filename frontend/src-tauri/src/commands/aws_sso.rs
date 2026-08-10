@@ -556,7 +556,7 @@ pub struct WebIdentityCredentials {
 }
 
 /// RoleSessionName must match `[\w+=,.@-]{2,64}`. Sanitize freely-formed
-/// names (e.g. `maestro-alex@groovysec.com-<assessmentId>`) into that set
+/// names (e.g. `operator@example.com-<assessmentId>`) into that set
 /// and clamp the length so CloudTrail still shows a useful identity.
 fn sanitize_session_name(raw: &str) -> String {
     let cleaned: String = raw

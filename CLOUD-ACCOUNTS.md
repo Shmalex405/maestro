@@ -320,10 +320,10 @@ production path.
   ```json
   {
     "type": "service_account",
-    "project_id": "groovy-prod",
+    "project_id": "my-project",
     "private_key_id": "...",
     "private_key": "-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n",
-    "client_email": "maestro-audit@groovy-prod.iam.gserviceaccount.com",
+    "client_email": "maestro-audit@my-project.iam.gserviceaccount.com",
     ...
   }
   ```

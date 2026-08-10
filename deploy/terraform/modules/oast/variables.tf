@@ -37,7 +37,7 @@ variable "public_subnet_id" {
 # --- DNS ----------------------------------------------------------------------
 
 variable "oast_domain" {
-  description = "Fully-qualified domain the listener is authoritative for, e.g. oast.maestro.groovysec.com. Interactsh mints per-session subdomains beneath it."
+  description = "Fully-qualified domain the listener is authoritative for, e.g. oast.example.com. Interactsh mints per-session subdomains beneath it."
   type        = string
 
   # A caller that gates this module behind an *_enabled bool will pass its empty

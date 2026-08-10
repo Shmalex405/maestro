@@ -85,6 +85,13 @@
 # RFCs, plans and specs are internal thinking, often with unshipped decisions and
 # cost figures. docs/user-guide/ is NOT excluded — it is a hard build dependency
 # (include_dir!) and the source of the in-app documentation.
+#
+# PLAN- is a PREFIX pattern and it is here because its absence leaked a document.
+# `^docs/.*-plan\.md$` below covers the -plan.md SUFFIX, which is how almost every
+# one of these is named — so PLAN-ai-interactive-assessment.md matched nothing and
+# was published: 628 lines of future-tense roadmap. Name a doc on either side of the
+# word and it is caught now.
+^docs/PLAN-.*\.md$
 ^docs/RFC-.*\.md$
 ^docs/.*-plan\.md$
 ^docs/.*-spec\.md$

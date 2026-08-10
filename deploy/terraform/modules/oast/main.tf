@@ -272,7 +272,7 @@ resource "aws_eip_association" "oast" {
 # Written into the PARENT zone (maestro.groovysec.com) via the aws.dns provider,
 # which has assumed MaestroDNSWriter in the master account. Two record sets:
 #
-#   oast.maestro.groovysec.com      NS  ns1/ns2.oast.maestro.groovysec.com
+#   oast.example.com      NS  ns1/ns2.oast.example.com
 #   ns1|ns2.oast.maestro...         A   <EIP>        ← in-zone glue
 #
 # The glue is mandatory: the nameservers for oast.maestro… live *inside*

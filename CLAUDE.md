@@ -104,18 +104,17 @@ between brains. Only the LLM driving the tool calls differs.
 | Claude (Sparkles tab) | `claude` (Anthropic Claude Code) | `/usr/local/bin/claude` | `assess-<id>` | `/root/.claude/.credentials.json` |
 | Codex (Bot tab) | `codex` (OpenAI Codex CLI) | `/usr/local/bin/codex` | `codex-assess-<id>` | `/root/.codex/auth.json` |
 
-Both brains support the same three credential modes, mirrored 1:1:
+Both brains support the same two credential modes, mirrored 1:1:
 
 | Mode | Claude | Codex |
 |---|---|---|
 | OAuth | "Sign in with Claude" (browser flow) | "Sign in with ChatGPT" (device-code) |
 | API key | `ANTHROPIC_API_KEY=sk-ant-...` | `OPENAI_API_KEY=sk-...` |
-| Bundled | `ANTHROPIC_BASE_URL=<proxy>/` | `OPENAI_BASE_URL=<proxy>/openai/` |
 
-**Bundled metering:** OpenAI tokens count 1:1 against the same per-org
-DynamoDB row (`maestro_bundled_usage`) as Anthropic tokens. The proxy
-(`proxy/`) factors a shared `createUpstreamProxy(config)` shell over
-provider-specific scrapers (`anthropic-usage.ts`, `openai-usage.ts`).
+Either way the operator brings their own LLM account and the credentials stay on
+their machine. A third "Bundled" mode — tokens metered through a Groovy-run proxy —
+was removed in 1.12.0 as part of the open-core work; `CredentialMode` is now just
+`Oauth | ApiKey` and the proxy is gone. Do not reintroduce references to it.
 
 **What changes per release:**
 
