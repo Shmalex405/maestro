@@ -69,6 +69,11 @@
 # secret-scan jobs) and the e2e workflows.
 ^\.github/workflows/release\.yml$
 ^\.github/workflows/release-desktop\.yml$
+# Syncs groovysec.com to a release. Groovy's marketing site, our repo name and our
+# WEBSITE_SYNC_TOKEN — nothing a self-hoster can run, and no reason to publish the
+# plumbing. scripts/maestro-facts.mjs, which it calls, IS published: that just
+# derives the agent/tool/test counts and is useful on its own.
+^\.github/workflows/sync-website\.yml$
 ^\.github/workflows/deploy-platform\.yml$
 ^\.github/workflows/publish-.*\.yml$
 ^\.github/workflows/groovy-.*\.yml$
