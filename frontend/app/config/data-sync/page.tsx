@@ -31,6 +31,11 @@ import {
   type TeamOnlyFeature,
 } from '@/lib/deployment-mode';
 import {
+  canReconnectToCloud,
+  clearDeploymentConfig,
+  resetSelfHostCache,
+} from '@/lib/self-host';
+import {
   HardDrive,
   Cloud,
   Check,
@@ -64,10 +69,17 @@ export default function DataSyncPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
+  // Whether this install can go back to the managed cloud — true only for a
+  // managed BUILD currently held local by a config file, which is exactly the
+  // state the startup escape hatch leaves behind. See canReconnectToCloud.
+  const [canReconnect, setCanReconnect] = useState(false);
 
   // Read once on mount rather than during render — getDataMode touches
   // localStorage, which is absent during the static-export prerender.
   useEffect(() => setMode(getDataMode()), []);
+  useEffect(() => {
+    canReconnectToCloud().then(setCanReconnect).catch(() => setCanReconnect(false));
+  }, [mode]);
 
   const isLocal = mode === 'local';
 
@@ -77,8 +89,31 @@ export default function DataSyncPage() {
     setSaved(false);
     try {
       await invoke('set_local_mode');
+      // Drop the cached config so anything re-reading it this session (the
+      // startup gate on a retry, canReconnectToCloud below) sees the new file
+      // rather than the answer from process start.
+      resetSelfHostCache();
       setDataMode('local');
       setMode('local');
+      setSaved(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Return to the managed cloud flow — the way back from the startup escape
+   *  hatch. Deletes the config file the hatch wrote, so the next launch resolves
+   *  the backend through discovery again exactly as it did before. */
+  async function reconnectToCloud() {
+    setBusy(true);
+    setError('');
+    setSaved(false);
+    try {
+      await clearDeploymentConfig();
+      setDataMode('cloud');
+      setMode('cloud');
       setSaved(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -95,6 +130,7 @@ export default function DataSyncPage() {
       // The Rust side validates and reports missing fields by name, so a
       // truncated paste gets a useful message instead of a generic failure.
       await invoke('set_deployment_config', { config_json: pasted });
+      resetSelfHostCache();
       setDataMode('cloud');
       setMode('cloud');
       setSaved(true);
@@ -184,10 +220,34 @@ export default function DataSyncPage() {
               in against your Cognito pool and share one view of the data.
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="space-y-3">
             <p className="text-xs text-muted-foreground">
               Deploy with <code className="text-[11px]">deploy/terraform/maestro-self-host</code>
             </p>
+            {/* The return door. Only rendered when it actually leads somewhere:
+                a managed build sitting local because of a config file. A
+                self-host build is local by compilation and an env-var config
+                cannot be unset from here, so in both of those cases this would
+                be a button that silently changes nothing. */}
+            {isLocal && canReconnect && (
+              <div className="space-y-2 border-t pt-3">
+                <p className="text-xs text-muted-foreground">
+                  This install is signed up for the Maestro cloud but is running
+                  locally. Reconnecting restores sign-in and your team&apos;s
+                  shared findings; anything assessed locally stays in the local
+                  database.
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || !isTauri()}
+                  onClick={reconnectToCloud}
+                >
+                  {busy ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : null}
+                  Reconnect to cloud
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

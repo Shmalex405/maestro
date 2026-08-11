@@ -283,11 +283,31 @@ pub struct SelfHostStatus {
     pub enabled: bool,
     pub config: Option<SelfHostConfig>,
     pub error: Option<String>,
+    /// Build-time flavor: `"managed"` or `"self-host"`. See [`distribution`].
+    ///
+    /// The frontend needs this to answer a question `enabled` cannot: whether
+    /// this install has a cloud to go BACK to. A managed build sitting in local
+    /// mode got there from a config file, so deleting that file returns it to
+    /// discovery; a self-host build is local because it was compiled that way,
+    /// and deleting the file changes nothing. Offering "reconnect to cloud" in
+    /// the second case would be a button that silently does nothing.
+    pub distribution: String,
+    /// Whether a config file exists on disk (as opposed to env vars or the
+    /// build default). Only a file can be cleared, so this gates the return
+    /// door — an operator who configured Maestro through `MAESTRO_*` env vars
+    /// has to unset those, and a button could not do it for them.
+    pub from_file: bool,
 }
 
 impl SelfHostStatus {
     fn managed() -> Self {
-        Self::default()
+        Self {
+            enabled: false,
+            config: None,
+            error: None,
+            distribution: distribution().to_string(),
+            from_file: false,
+        }
     }
 
     fn broken(msg: String) -> Self {
@@ -295,14 +315,20 @@ impl SelfHostStatus {
             enabled: true,
             config: None,
             error: Some(msg),
+            distribution: distribution().to_string(),
+            // A file that exists but won't parse is still a file, and clearing
+            // it is exactly how an operator escapes a config they cannot fix.
+            from_file: config_path().is_some_and(|p| p.exists()),
         }
     }
 
-    fn active(cfg: SelfHostConfig) -> Self {
+    fn active(cfg: SelfHostConfig, from_file: bool) -> Self {
         Self {
             enabled: true,
             config: Some(cfg),
             error: None,
+            distribution: distribution().to_string(),
+            from_file,
         }
     }
 }
@@ -362,7 +388,42 @@ pub async fn get_self_host_config() -> Result<SelfHostStatus> {
         );
     }
 
-    Ok(SelfHostStatus::active(cfg))
+    Ok(SelfHostStatus::active(cfg, source == "config file"))
+}
+
+/// Delete `~/.kali-mcp-pentest/self-host.json`, returning this install to its
+/// build default.
+///
+/// This is the return door for the startup escape hatch. The hatch lets someone
+/// locked out of a managed install — dead control plane, unreachable Hosted UI,
+/// expired account — drop into local mode and keep working. That is only a safe
+/// offer if it is reversible: without this command, `set_local_mode` writes a
+/// file that nothing in the UI can remove, and a paying customer who took the
+/// hatch would be stranded in local mode looking at an empty database, with
+/// their team's findings still in the cloud and no way back short of deleting
+/// the file by hand.
+///
+/// A missing file is success, not an error — the caller's intent is "leave no
+/// config behind", and that is already true.
+///
+/// Note this does NOT clear `MAESTRO_*` env vars or change a `self-host` build's
+/// compiled-in default. `SelfHostStatus::from_file` tells the frontend when the
+/// door actually leads anywhere; see the doc there.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn clear_deployment_config() -> Result<()> {
+    let Some(path) = config_path() else {
+        return Err(AppError::Config(
+            "Could not resolve the home directory to clear self-host.json".into(),
+        ));
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => {
+            info!("Deployment config cleared — this install returns to its build default");
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// True when this install keeps its data on this machine.
@@ -595,13 +656,49 @@ mod tests {
         assert!(broken.config.is_none());
         assert_eq!(broken.error.as_deref(), Some("missing: backendUrl"));
 
-        let active = SelfHostStatus::active(complete().normalize());
+        let active = SelfHostStatus::active(complete().normalize(), true);
         assert!(active.enabled);
         assert!(active.error.is_none());
+        assert!(active.from_file);
         assert_eq!(
             active.config.expect("config present").backend_url,
             "https://maestro.acme.test"
         );
+    }
+
+    /// The return door is only offered when clearing the config file would
+    /// actually change the mode. A managed build held local BY A FILE is the
+    /// one case that qualifies — and it is exactly the state the startup escape
+    /// hatch leaves behind, so getting this wrong strands the users the hatch
+    /// was built to rescue.
+    #[test]
+    fn only_a_file_backed_managed_build_can_reconnect() {
+        // Frontend rule (canReconnectToCloud): distribution == "managed" && fromFile.
+        let can_reconnect = |s: &SelfHostStatus| s.distribution == "managed" && s.from_file;
+
+        // Managed build, config file → the hatch's aftermath. Reconnect works.
+        let mut hatched = SelfHostStatus::active(
+            SelfHostConfig {
+                mode: DeploymentMode::Local,
+                org_id: "local".into(),
+                customer_name: "Local".into(),
+                ..Default::default()
+            },
+            true,
+        );
+        hatched.distribution = "managed".into();
+        assert!(can_reconnect(&hatched));
+
+        // Open-core build: local because it was compiled that way. Deleting the
+        // file leaves it local, so the button must not appear.
+        let mut open_core = hatched.clone();
+        open_core.distribution = "self-host".into();
+        assert!(!can_reconnect(&open_core));
+
+        // Configured via MAESTRO_* env vars — nothing on disk to remove.
+        let mut from_env = hatched.clone();
+        from_env.from_file = false;
+        assert!(!can_reconnect(&from_env));
     }
 
     #[test]

@@ -24,9 +24,13 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Lock, Mail, Loader2, KeyRound, ArrowLeft, ShieldCheck, Check, X, Eye, EyeOff, Globe, ExternalLink } from 'lucide-react';
+import { LocalModeEscape } from './local-mode-escape';
 
 interface AuthGateProps {
   onSuccess: () => void;
+  /** Switch to local mode. Offered only once sign-in has actually failed —
+   *  see LocalModeEscape for why it is neither automatic nor shown up front. */
+  onUseLocalMode?: () => void | Promise<void>;
 }
 
 function mapCognitoError(err: unknown): string {
@@ -153,7 +157,7 @@ function PasswordRequirements({
 
 type View = 'signin' | 'new_password' | 'forgot_request' | 'forgot_confirm';
 
-export function AuthGate({ onSuccess }: AuthGateProps) {
+export function AuthGate({ onSuccess, onUseLocalMode }: AuthGateProps) {
   const [view, setView] = useState<View>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -817,6 +821,15 @@ export function AuthGate({ onSuccess }: AuthGateProps) {
               </button>
             )}
           </form>
+          )}
+
+          {/* Escape hatch — shown once sign-in has actually failed, and covering
+              both the browser-OAuth and password branches above. The timeout
+              this most often follows is an unreachable Hosted UI, which no
+              amount of retrying fixes and which has nothing to do with whether
+              the local product works. */}
+          {error && onUseLocalMode && (
+            <LocalModeEscape onUseLocalMode={onUseLocalMode} context="signin" />
           )}
         </CardContent>
       </Card>

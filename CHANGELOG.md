@@ -13,6 +13,23 @@ Releases are roughly monthly, with patch releases as needed.
 
 ---
 
+## 1.13.1 — 2026-08-11
+
+**Nobody gets stuck at the sign-in screen.**
+
+- **Escape hatch.** An install that signs in against a cloud backend can now continue
+  in local mode straight from the discovery or sign-in screen when that backend is
+  unreachable. Scanners, the toolkit container, the agents and the report pipeline
+  never needed an account — only the choice of where findings are *stored* does — so
+  an outage on the sign-in path no longer stops you working. Offered only after a
+  sign-in actually fails, and never applied automatically: local mode shows a
+  different (empty) database, and an app that switched itself would read as "my
+  findings vanished."
+- **A way back.** Config → Data & Sync gained **Reconnect to cloud**, which clears the
+  local-mode config and restores the normal sign-in flow. It appears only when it
+  would actually do something — a build that is local because it was compiled that
+  way, or configured through `MAESTRO_*` environment variables, does not show it.
+
 ## 1.13.0 — 2026-08-08
 
 **Maestro is free, and the source is public.**

@@ -42,6 +42,40 @@ interface SelfHostStatus {
   enabled: boolean;
   config: SelfHostConfig | null;
   error: string | null;
+  /** `"managed"` or `"self-host"` — the build-time flavor. */
+  distribution?: string;
+  /** Whether the active config came from a file (and so can be cleared). */
+  fromFile?: boolean;
+}
+
+/** Whether this install can be returned to the managed cloud flow.
+ *
+ *  True only for a managed BUILD currently held in self-hosted/local mode by a
+ *  config FILE. A self-host build is local because it was compiled that way, and
+ *  an env-var config cannot be unset from the UI — in both cases clearing the
+ *  file would leave the mode unchanged, so the caller must not offer it.
+ *
+ *  Optional-chained against older builds: a Tauri backend predating these two
+ *  fields returns neither, which reads as "cannot reconnect". That is the safe
+ *  direction — a hidden button beats one that silently does nothing. */
+export async function canReconnectToCloud(): Promise<boolean> {
+  if (!isTauri()) return false;
+  try {
+    const s = await invoke<SelfHostStatus>('get_self_host_config');
+    return s?.distribution === 'managed' && s?.fromFile === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Delete the on-disk config, returning this install to its build default.
+ *
+ *  The return door for the startup escape hatch. Resets the module cache so the
+ *  next getSelfHostConfig() re-reads from disk rather than serving the local
+ *  config this call just removed. */
+export async function clearDeploymentConfig(): Promise<void> {
+  await invoke('clear_deployment_config');
+  resetSelfHostCache();
 }
 
 // Cached across calls within a session. The config is read from disk at
@@ -162,7 +196,22 @@ export function bootstrapFromSelfHost(
   };
 }
 
-/** Test seam — resets the module cache. */
-export function __resetSelfHostCacheForTests(): void {
+/**
+ * Drop the cached config so the next getSelfHostConfig() re-reads from disk.
+ *
+ * Required after ANY write to the config — set_local_mode, set_deployment_config,
+ * clear_deployment_config. The cache exists because a config normally cannot
+ * change under a running app, but the startup escape hatch breaks that
+ * assumption: it writes a local config and re-runs startup IN PROCESS. Without
+ * this reset, that re-run would be served the stale `null` cached during the
+ * failed managed startup, conclude the install is still managed, and walk
+ * straight back into the sign-in screen the user just escaped.
+ */
+export function resetSelfHostCache(): void {
   cached = undefined;
+}
+
+/** Test seam — alias kept so existing tests keep reading as test-only intent. */
+export function __resetSelfHostCacheForTests(): void {
+  resetSelfHostCache();
 }

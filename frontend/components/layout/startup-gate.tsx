@@ -32,7 +32,7 @@ import {
   discover,
 } from '@/lib/desktop-bootstrap';
 import { isReadOnlyNow } from '@/lib/read-only';
-import { getSelfHostConfig, bootstrapFromSelfHost } from '@/lib/self-host';
+import { getSelfHostConfig, bootstrapFromSelfHost, resetSelfHostCache } from '@/lib/self-host';
 import { setDataMode } from '@/lib/deployment-mode';
 import { isTauri } from '@/lib/tauri-api';
 import { invoke } from '@tauri-apps/api/core';
@@ -893,6 +893,31 @@ export function StartupGate({ children }: { children: ReactNode }) {
     runStartup();
   }, [runStartup]);
 
+  // ESCAPE HATCH — drop into local mode when the cloud is unreachable.
+  //
+  // Both gates above can dead-end with nothing behind them: discovery needs
+  // Groovy's platform to answer, and browser sign-in needs the Cognito Hosted
+  // UI to resolve. If either host is down the user is stuck on a screen whose
+  // only actions are "retry" and "retry", with a fully working local product
+  // sitting behind it — the scanners, the container and the agents never needed
+  // an account. This turns that dead end into a door.
+  //
+  // Deliberately NOT a silent fallback. Cloud data is not visible in local
+  // mode, so an install that quietly repointed itself at an empty SQLite DB
+  // would read as "my findings are gone" — the exact failure DEFAULT_MODE in
+  // deployment-mode.ts is written to avoid. The user opts in, having been told,
+  // and Config → Data & Sync brings them back (see clearDeploymentConfig).
+  const handleUseLocalMode = useCallback(async () => {
+    // Order matters: write the file, THEN drop the cache. getSelfHostConfig()
+    // has already cached `null` during the startup that just failed, and the
+    // re-run below would otherwise be served that stale answer and walk right
+    // back into the gate the user is escaping.
+    await invoke('set_local_mode');
+    resetSelfHostCache();
+    setDataMode('local');
+    runStartup();
+  }, [runStartup]);
+
   // Run startup on mount.
   //
   // We intentionally read hasCompleted via readHasCompleted() here
@@ -924,12 +949,17 @@ export function StartupGate({ children }: { children: ReactNode }) {
 
   // First-launch discovery: ask for email, auto-configure Cognito + backend URL
   if (state === 'discovery_required') {
-    return <DiscoveryGate onSuccess={handleDiscoverySuccess} />;
+    return (
+      <DiscoveryGate
+        onSuccess={handleDiscoverySuccess}
+        onUseLocalMode={handleUseLocalMode}
+      />
+    );
   }
 
   // Auth required: show login form (replaces entire card)
   if (state === 'auth_required') {
-    return <AuthGate onSuccess={handleAuthSuccess} />;
+    return <AuthGate onSuccess={handleAuthSuccess} onUseLocalMode={handleUseLocalMode} />;
   }
 
   // Render startup gate UI

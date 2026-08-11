@@ -8,16 +8,20 @@ import { Label } from '@/components/ui/label';
 import { Mail, Loader2, AlertCircle } from 'lucide-react';
 import { discover, saveBootstrap, PLATFORM_URL } from '@/lib/desktop-bootstrap';
 import { api } from '@/lib/tauri-api';
+import { LocalModeEscape } from './local-mode-escape';
 
 interface DiscoveryGateProps {
   onSuccess: () => void;
+  /** Switch to local mode. Offered only once discovery has actually failed —
+   *  see LocalModeEscape for why it is neither automatic nor shown up front. */
+  onUseLocalMode?: () => void | Promise<void>;
 }
 
 // First-launch onboarding. Takes an email, asks the Groovy platform which
 // customer the user belongs to, saves the resulting backend URL + Cognito
 // settings, and hands off to the normal auth gate.
 
-export function DiscoveryGate({ onSuccess }: DiscoveryGateProps) {
+export function DiscoveryGate({ onSuccess, onUseLocalMode }: DiscoveryGateProps) {
   const [email, setEmail] = useState('');
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -133,6 +137,14 @@ export function DiscoveryGate({ onSuccess }: DiscoveryGateProps) {
               find your backend. Nothing is logged in.
             </p>
           </form>
+
+          {/* Only after a real failure — an unreachable platform is exactly the
+              case where local mode is the right answer, and the only case where
+              offering it does not risk pulling someone out of their team's data
+              for no reason. */}
+          {error && onUseLocalMode && (
+            <LocalModeEscape onUseLocalMode={onUseLocalMode} context="discovery" />
+          )}
         </CardContent>
       </Card>
     </div>

@@ -102,6 +102,7 @@ fn main() {
             commands::self_host::get_self_host_config,
             commands::self_host::set_local_mode,
             commands::self_host::set_deployment_config,
+            commands::self_host::clear_deployment_config,
             commands::system::start_kali_container,
             commands::system::set_toolkit_credentials,
             commands::system::stop_kali_container,
