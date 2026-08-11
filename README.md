@@ -620,6 +620,8 @@ This is actively developed and feedback genuinely shapes it.
 | **Report a vulnerability in Maestro itself** | **Privately** to <security@groovysec.com> — see [SECURITY.md](SECURITY.md). Never a public issue. |
 | **Ask about commercial licensing or support** | <support@groovysec.com> |
 
+Release history and what changed when: [CHANGELOG.md](CHANGELOG.md).
+
 Full detail in [SUPPORT.md](SUPPORT.md). If you are thinking about contributing
 code, read [CONTRIBUTING.md](CONTRIBUTING.md) first — some paths in this
 repository are commercially licensed and cannot accept contributions.
