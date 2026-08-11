@@ -13,6 +13,24 @@ Releases are roughly monthly, with patch releases as needed.
 
 ---
 
+## 1.13.2 — 2026-08-11
+
+**Onboarding docs caught up with open core.**
+
+- **Corrected the getting-started guide.** It still described Maestro as a thin client
+  over a cloud backend and stated outright that there was no local-only mode — the
+  opposite of what the free build has done by default since 1.13.0. It also still
+  offered the Groovy-managed "Bundled" credential tier, removed in 1.12.0. The guide
+  now opens with which mode you are in and what each gives you, marks sign-in as a
+  team-mode step, and documents the escape hatch.
+- **Reconnecting to the cloud checks the cloud is there first.** Restoring the managed
+  sign-in flow while the platform is unreachable would leave the next launch stopped
+  at a sign-in screen that cannot complete. The reconnect action now probes first and
+  says so, and proceeds only if you confirm — an operator who knows their backend is
+  coming back can still go ahead.
+- The restart requirement for a mode switch is stated before you make the switch,
+  rather than only after.
+
 ## 1.13.1 — 2026-08-11
 
 **Nobody gets stuck at the sign-in screen.**

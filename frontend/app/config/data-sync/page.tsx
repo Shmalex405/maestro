@@ -35,6 +35,7 @@ import {
   clearDeploymentConfig,
   resetSelfHostCache,
 } from '@/lib/self-host';
+import { isPlatformReachable } from '@/lib/desktop-bootstrap';
 import {
   HardDrive,
   Cloud,
@@ -73,6 +74,14 @@ export default function DataSyncPage() {
   // managed BUILD currently held local by a config file, which is exactly the
   // state the startup escape hatch leaves behind. See canReconnectToCloud.
   const [canReconnect, setCanReconnect] = useState(false);
+  // Set once a reconnect attempt found the platform unreachable. Turns the
+  // button into an explicit "reconnect anyway" rather than blocking outright.
+  const [unreachableAck, setUnreachableAck] = useState(false);
+  // Set once the reconnect succeeds, purely to disable the button — the config
+  // file is already gone, so a second click is a no-op. The restart requirement
+  // itself is stated up front in the card copy and again in the global "Saved"
+  // banner below, which is where it belongs.
+  const [needsRestart, setNeedsRestart] = useState(false);
 
   // Read once on mount rather than during render — getDataMode touches
   // localStorage, which is absent during the static-export prerender.
@@ -105,16 +114,29 @@ export default function DataSyncPage() {
 
   /** Return to the managed cloud flow — the way back from the startup escape
    *  hatch. Deletes the config file the hatch wrote, so the next launch resolves
-   *  the backend through discovery again exactly as it did before. */
+   *  the backend through discovery again exactly as it did before.
+   *
+   *  Probes the platform first. If it cannot be reached, reconnecting would
+   *  clear local mode and park the user on a discovery gate that cannot
+   *  complete — the same dead end the hatch exists to escape, except now it
+   *  looks self-inflicted. So the first click warns and the second proceeds:
+   *  the operator may well know the platform is coming back up, and this is
+   *  their call to make, not ours to block. */
   async function reconnectToCloud() {
     setBusy(true);
     setError('');
     setSaved(false);
     try {
+      if (!unreachableAck && !(await isPlatformReachable())) {
+        setUnreachableAck(true);
+        return;
+      }
       await clearDeploymentConfig();
       setDataMode('cloud');
       setMode('cloud');
+      setUnreachableAck(false);
       setSaved(true);
+      setNeedsRestart(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -235,16 +257,36 @@ export default function DataSyncPage() {
                   This install is signed up for the Maestro cloud but is running
                   locally. Reconnecting restores sign-in and your team&apos;s
                   shared findings; anything assessed locally stays in the local
-                  database.
+                  database. Takes effect when you restart Maestro.
                 </p>
+
+                {/* The platform did not answer. Reconnecting is still allowed —
+                    the operator may know it is coming back — but not silently,
+                    because the next launch would strand them on a sign-in screen
+                    that cannot complete. */}
+                {unreachableAck && (
+                  <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-400" />
+                    <p className="text-xs text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        Can&apos;t reach the Maestro platform right now.
+                      </span>{' '}
+                      Reconnecting will restore sign-in, but until the platform
+                      responds the next launch will stop at the sign-in screen —
+                      you&apos;d need to choose &ldquo;Continue without an
+                      account&rdquo; again. Staying local keeps you working.
+                    </p>
+                  </div>
+                )}
+
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={busy || !isTauri()}
+                  disabled={busy || !isTauri() || needsRestart}
                   onClick={reconnectToCloud}
                 >
                   {busy ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : null}
-                  Reconnect to cloud
+                  {unreachableAck ? 'Reconnect anyway' : 'Reconnect to cloud'}
                 </Button>
               </div>
             )}

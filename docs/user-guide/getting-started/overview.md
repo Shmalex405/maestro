@@ -1,29 +1,45 @@
 # Overview
 
-Maestro is your team's automated security assessment platform — run pentests, code scans, and Cycode-style validations from your laptop, and everything you produce lands in your org's shared cloud.
+Maestro is an automated security assessment platform — run pentests, code scans, and Cycode-style validations from your laptop. Scans always execute on your machine; you choose whether the results stay there or land in a shared workspace your team can see.
 
 > [!NOTE] At a glance
 > - **Where work happens:** a Kali Linux container on *your* machine runs every scan.
-> - **Where results live:** your org's cloud — so teammates see the same findings, assessments, and reports.
-> - **What you'll do first:** sign in, wait for the one-time toolkit download, then run an assessment.
+> - **Where results live:** your choice — a local database on this machine, or a shared cloud workspace.
+> - **What you'll do first:** sign in (team mode only), wait for the one-time toolkit download, then run an assessment.
 > - **Time to first scan:** ~5–15 min on first launch (toolkit download), seconds after that.
 
 ## Before you start
 
-You'll need three things:
+You'll need:
 
-1. **Your work email** — Maestro uses it to find your org's backend automatically. No server URL to type.
-2. **Docker Desktop installed and running** — Maestro spins up its Kali container through Docker.
-3. **A target you're authorized to test** — a URL, an IP range, or a local repo path.
+1. **Docker Desktop installed and running** — Maestro spins up its Kali container through Docker.
+2. **A target you're authorized to test** — a URL, an IP range, or a local repo path.
+3. **Your work email** — only in team mode, so Maestro can find your org's backend automatically. No server URL to type.
 
-> [!IMPORTANT] Maestro is a thin client over your org's cloud
-> When you sign in, the app shows everything your org has produced — including assessments your teammates ran. When you sign out, it shows nothing. There is no local-only mode.
+## Which mode am I in?
 
-## Step 1 — Sign in
+| | Local | Team |
+| --- | --- | --- |
+| Sign-in | None | Your org's Cognito account |
+| Findings, assessments, reports | A database on this machine | Shared — teammates see the same data |
+| Who it's for | A single operator | Several people working the same findings |
+
+The free build defaults to **local**: no account, no backend, nothing to provision. Team mode is what a subscription or a self-hosted deployment gives you, and is the mode the rest of this guide assumes where it mentions signing in.
+
+Five capabilities need team mode — the attack-graph explorer, post-exploitation campaigns, scheduled scanning, user roles, and cross-assessment caching. The app names which and why rather than showing empty screens. Everything else — every scanner, every agent, severity calibration, oracle verification, reports and PDFs — is identical in both.
+
+You can switch either way from **Config → Data & Sync**. Switching does not move data: the two stores are separate, and nothing is deleted from the one you leave.
+
+## Step 1 — Sign in *(team mode only)*
+
+Local mode skips this entirely — the app goes straight to the toolkit download.
 
 1. Launch Maestro. On first run it asks for your **work email**.
 2. The discovery flow looks up your org's per-org backend from your email domain and walks you through Cognito sign-in.
 3. Once you're in, the dashboard loads your org's existing assessments, findings, and reports.
+
+> [!TIP] If sign-in can't reach the server
+> When the discovery or sign-in step can't be reached, the screen offers **Continue without an account**, which drops you into local mode so you can keep working. Reconnect later from **Config → Data & Sync**.
 
 ## Step 2 — Wait for the toolkit (first launch only)
 
@@ -40,7 +56,7 @@ The first launch downloads a **~6 GB Kali toolkit image** — the thing that run
 Assessments are driven by an AI "brain" — **Claude** or **Codex** — running inside the container. You authenticate it once before anything will run.
 
 1. Sidebar → **Config → Claude** (or **Config → Codex**).
-2. Pick a credential mode — sign in via browser, paste an **API key**, or use **Bundled** (Groovy-managed) — and connect.
+2. Pick a credential mode — sign in via browser, or paste an **API key** — and connect. Either way you bring your own Claude or ChatGPT account, and the credentials stay on this machine.
 3. The status rows turn green when it's ready.
 
 > [!IMPORTANT] No brain, nothing runs
@@ -61,6 +77,8 @@ Findings stream into the **Findings** page as they're discovered. When the run f
 
 ## What's local vs. what's cloud
 
+In **team mode**, work is split between your machine and the shared workspace:
+
 | Lives on your machine | Lives in your org's cloud |
 | --- | --- |
 | Kali Docker container & tool execution | Assessments, findings, reports |
@@ -68,6 +86,8 @@ Findings stream into the **Findings** page as they're discovered. When the run f
 | Slash command + agent definitions | Repository entries (metadata only — paths are per-machine) |
 | Per-user secrets (Cognito tokens) | Imports (Cycode, CSV) |
 | Local repo clone paths | Audit logs |
+
+In **local mode** the right-hand column moves to a database on this machine as well, and nothing leaves it. The left-hand column is identical in both modes — scanning has always been local.
 
 ## Three ways teams use Maestro
 

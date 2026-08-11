@@ -127,6 +127,39 @@ export interface DiscoveryResponse {
   recognized: boolean;
 }
 
+/**
+ * Whether the discovery platform answers at all.
+ *
+ * Used before restoring an install to the managed cloud flow. Reconnecting is
+ * cheap to do and expensive to get wrong: it clears local mode, and the next
+ * launch walks into a discovery gate that cannot complete if the platform is
+ * unreachable — which lands the user back on the sign-in screen they escaped,
+ * with no indication that the mode switch was the thing that put them there.
+ * Probing first turns that into a warning they can act on.
+ *
+ * ANY HTTP response counts as reachable, including 4xx and 5xx. The endpoint
+ * 400s without an `email` parameter, and deliberately so — we are asking "is
+ * something listening", not "does this request succeed". Only a transport-level
+ * failure (DNS, refused connection, timeout) means unreachable, which is
+ * precisely the failure mode this exists to catch: a torn-down platform NXDOMAINs.
+ */
+export async function isPlatformReachable(timeoutMs = 8000): Promise<boolean> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    await fetch(`${PLATFORM_URL.replace(/\/+$/, '')}/api/discover`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function discover(email: string): Promise<DiscoveryResponse> {
   const url = `${PLATFORM_URL.replace(/\/+$/, '')}/api/discover?email=${encodeURIComponent(email)}`;
   const res = await fetch(url, {
