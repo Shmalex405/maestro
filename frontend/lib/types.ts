@@ -606,6 +606,30 @@ export interface CreateJiraTicketResult {
   status: string;
 }
 
+export interface CreateRemediationPrParams {
+  owner: string;
+  repo: string;
+  base_branch?: string;
+  /** When set and the finding has no ticket yet, a Jira ticket is created here
+   *  and cross-linked to the PR. */
+  project_key?: string;
+  priority?: string;
+  /** Draft by default — remediation PRs are always human-reviewed before merge. */
+  draft?: boolean;
+}
+
+export interface CreateRemediationPrResult {
+  status: string;
+  pr_url?: string;
+  pr_number?: number;
+  pr_branch?: string;
+  pr_status?: string;
+  jira_ticket?: string;
+  ticket_created?: boolean;
+  jira_linked?: boolean;
+  error?: string;
+}
+
 export interface UploadReportParams {
   report_id: string;
   destinations: ('sharepoint' | 'email')[];
@@ -1507,6 +1531,11 @@ export interface Finding {
   validation_method?: string;
   jira_ticket?: string;
   jira_url?: string;
+  // Remediation PR linkage (set by create_remediation_pr)
+  pr_url?: string;
+  pr_status?: string; // "draft" | "open" | "merged" | "closed"
+  pr_branch?: string;
+  pr_number?: number;
   tags?: string[];
   exploitable?: string;
   // Code context (for SAST findings)
@@ -1514,6 +1543,9 @@ export interface Finding {
   line_start?: number;
   line_end?: number;
   code_snippet?: string;
+  remediation_code?: string;
+  remediation_explanation?: string;
+  file_locations?: string; // JSON-encoded array of {file, line, context, commit_hash, author}
   // Per-vuln dedup (v0.1.54+) — populated by the cloud backend's
   // upsert logic. Same fingerprint → same row, occurrence_count
   // increments, last_seen_at refreshes. Backend computes fingerprint

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, Suspense } from 'react';
+import { useState, useMemo, useEffect, Suspense } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/tauri-api';
@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
-import { AlertOctagon, AlertTriangle, AlertCircle, Info, ArrowLeft, ExternalLink, Ticket, Trash2, Cloud, Container, MapPin, Box, Copy, Check } from 'lucide-react';
+import { AlertOctagon, AlertTriangle, AlertCircle, Info, ArrowLeft, ExternalLink, Ticket, GitPullRequest, Trash2, Cloud, Container, MapPin, Box, Copy, Check } from 'lucide-react';
 import { toast } from 'sonner';
 import { ReportViewer } from '@/components/reports/report-viewer';
 import { inferCloudFromFinding, PROVIDER_DISPLAY } from '@/lib/finding-cloud-inference';
@@ -150,6 +150,11 @@ function FindingDetailContent() {
   const [jiraProjectKey, setJiraProjectKey] = useState('');
   const [jiraDialogOpen, setJiraDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [prDialogOpen, setPrDialogOpen] = useState(false);
+  const [prOwner, setPrOwner] = useState('');
+  const [prRepo, setPrRepo] = useState('');
+  const [prBaseBranch, setPrBaseBranch] = useState('');
+  const [prProjectKey, setPrProjectKey] = useState('');
 
   const id = searchParams.get('id');
 
@@ -169,6 +174,47 @@ function FindingDetailContent() {
     mutationFn: () => api.findings.createJiraTicket(id as string, { project_key: jiraProjectKey }),
     onSuccess: (data) => { queryClient.invalidateQueries({ queryKey: ['finding', id] }); setJiraDialogOpen(false); toast.success(`Jira ticket ${data.ticket_key} created`); },
     onError: () => toast.error('Failed to create Jira ticket'),
+  });
+
+  // Remediation PR — only for code-associated findings that carry a generated
+  // fix. Pre-fill the repo from the GitHub repositories registry and the Jira
+  // project from integrations, so the common case is one click.
+  const { data: repos } = useQuery({ queryKey: ['repositories'], queryFn: () => api.repositories.list() });
+  const githubRepos = useMemo(
+    () => (repos || []).filter((r: any) => r.source_type === 'github' && r.github_owner && r.github_repo),
+    [repos],
+  );
+  useEffect(() => {
+    if (!prOwner && githubRepos.length > 0) {
+      setPrOwner((githubRepos[0] as any).github_owner);
+      setPrRepo((githubRepos[0] as any).github_repo);
+    }
+  }, [githubRepos, prOwner]);
+  useEffect(() => {
+    if (!prProjectKey && integrations?.jira?.project_key) setPrProjectKey(integrations.jira.project_key);
+  }, [integrations, prProjectKey]);
+
+  const f = finding as any;
+  const canOpenPr = !!(f && f.file_path && f.remediation_code && f.line_start != null && f.line_end != null);
+
+  const createPrMutation = useMutation({
+    mutationFn: () => api.findings.createRemediationPr(id as string, {
+      owner: prOwner,
+      repo: prRepo,
+      base_branch: prBaseBranch || undefined,
+      project_key: prProjectKey || undefined,
+    }),
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['finding', id] });
+      queryClient.invalidateQueries({ queryKey: ['findings'] });
+      if (data.status === 'created') {
+        setPrDialogOpen(false);
+        toast.success(`Draft PR opened${data.jira_ticket ? ` · linked to ${data.jira_ticket}` : ''}`);
+      } else {
+        toast.error(data.error || 'Failed to open PR');
+      }
+    },
+    onError: () => toast.error('Failed to open remediation PR'),
   });
 
   const deleteMutation = useMutation({
@@ -220,6 +266,55 @@ function FindingDetailContent() {
         </div>
         <div className="flex gap-2">
           <Dialog open={jiraDialogOpen} onOpenChange={setJiraDialogOpen}><DialogTrigger asChild><Button variant="outline" disabled={!!finding.jira_ticket}><Ticket className="mr-2 h-4 w-4" />{finding.jira_ticket ? 'Ticket Created' : 'Create Jira Ticket'}</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Create Jira Ticket</DialogTitle><DialogDescription>Create a Jira ticket for this finding.</DialogDescription></DialogHeader><div className="space-y-4 py-4"><div className="space-y-2"><Label htmlFor="project">Project Key</Label><Input id="project" placeholder="SEC" value={jiraProjectKey} onChange={(e) => setJiraProjectKey(e.target.value.toUpperCase())} /></div></div><DialogFooter><Button variant="outline" onClick={() => setJiraDialogOpen(false)}>Cancel</Button><Button onClick={() => createJiraMutation.mutate()} disabled={!jiraProjectKey || createJiraMutation.isPending}>{createJiraMutation.isPending ? 'Creating...' : 'Create'}</Button></DialogFooter></DialogContent></Dialog>
+          {f.pr_url ? (
+            <Button variant="outline" asChild>
+              <a href={f.pr_url} target="_blank" rel="noopener noreferrer">
+                <GitPullRequest className="mr-2 h-4 w-4" />
+                {f.pr_status === 'merged' ? 'PR Merged' : f.pr_status === 'closed' ? 'PR Closed' : 'View Draft PR'}
+                <ExternalLink className="ml-2 h-3 w-3" />
+              </a>
+            </Button>
+          ) : (
+            <Dialog open={prDialogOpen} onOpenChange={setPrDialogOpen}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="outline"
+                  disabled={!canOpenPr}
+                  title={canOpenPr ? 'Open a draft fix PR' : 'Available only for code findings that carry a generated fix (file location + remediation code)'}
+                >
+                  <GitPullRequest className="mr-2 h-4 w-4" />Open Fix PR
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Open remediation PR</DialogTitle>
+                  <DialogDescription>
+                    Opens a <strong>draft</strong> pull request that applies the generated fix, for your team to review — nothing merges automatically.{' '}
+                    {f.jira_ticket ? `Links to ${f.jira_ticket}.` : 'A linked Jira ticket is created when you set a project key.'}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2"><Label htmlFor="pr-owner">Owner / org</Label><Input id="pr-owner" placeholder="acme-corp" value={prOwner} onChange={(e) => setPrOwner(e.target.value)} /></div>
+                    <div className="space-y-2"><Label htmlFor="pr-repo">Repository</Label><Input id="pr-repo" placeholder="payments-api" value={prRepo} onChange={(e) => setPrRepo(e.target.value)} /></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2"><Label htmlFor="pr-base">Base branch <span className="text-muted-foreground text-xs">(optional)</span></Label><Input id="pr-base" placeholder="default branch" value={prBaseBranch} onChange={(e) => setPrBaseBranch(e.target.value)} /></div>
+                    <div className="space-y-2"><Label htmlFor="pr-project">Jira project <span className="text-muted-foreground text-xs">(optional)</span></Label><Input id="pr-project" placeholder="SEC" value={prProjectKey} onChange={(e) => setPrProjectKey(e.target.value.toUpperCase())} disabled={!!f.jira_ticket} /></div>
+                  </div>
+                  <div className="rounded-md border bg-muted/40 p-3 text-xs space-y-1">
+                    <div className="font-medium flex items-center gap-1"><MapPin className="h-3 w-3" /> Fix preview</div>
+                    <div className="text-muted-foreground"><code>{f.file_path}</code> lines {f.line_start}–{f.line_end}</div>
+                    <pre className="mt-1 max-h-40 overflow-auto rounded bg-background p-2 whitespace-pre-wrap">{f.remediation_code}</pre>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setPrDialogOpen(false)}>Cancel</Button>
+                  <Button onClick={() => createPrMutation.mutate()} disabled={!prOwner || !prRepo || createPrMutation.isPending}>{createPrMutation.isPending ? 'Opening…' : 'Open draft PR'}</Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
           <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}><DialogTrigger asChild><Button variant="outline" className="text-destructive"><Trash2 className="mr-2 h-4 w-4" />Delete</Button></DialogTrigger><DialogContent><DialogHeader><DialogTitle>Delete Finding</DialogTitle><DialogDescription>This cannot be undone.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button><Button variant="destructive" onClick={() => deleteMutation.mutate()} disabled={deleteMutation.isPending}>{deleteMutation.isPending ? 'Deleting...' : 'Delete'}</Button></DialogFooter></DialogContent></Dialog>
         </div>
       </div>

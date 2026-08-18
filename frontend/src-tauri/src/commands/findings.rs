@@ -419,6 +419,105 @@ pub async fn create_jira_ticket(params: CreateJiraTicketParams) -> Result<JiraTi
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateRemediationPrParams {
+    pub finding_id: String,
+    pub owner: String,
+    pub repo: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub draft: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RemediationPrResult {
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_number: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jira_ticket: Option<String>,
+    #[serde(default)]
+    pub ticket_created: bool,
+    #[serde(default)]
+    pub jira_linked: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Open a DRAFT remediation PR for a code-associated finding and (optionally)
+/// create + cross-link a Jira ticket. Delegates entirely to the local MCP
+/// `create_remediation_pr` tool — the GitHub PAT lives in the user's local
+/// integrations config, so this stays a local-invoke path (never cloud).
+#[tauri::command]
+pub async fn create_remediation_pr(
+    params: CreateRemediationPrParams,
+) -> Result<RemediationPrResult> {
+    info!("Creating remediation PR for finding: {}", params.finding_id);
+
+    let mut arguments = serde_json::json!({
+        "finding_id": params.finding_id,
+        "owner": params.owner,
+        "repo": params.repo,
+    });
+    if let Some(b) = params.base_branch {
+        arguments["base_branch"] = serde_json::json!(b);
+    }
+    if let Some(pk) = params.project_key {
+        arguments["project_key"] = serde_json::json!(pk);
+    }
+    if let Some(p) = params.priority {
+        arguments["priority"] = serde_json::json!(p);
+    }
+    if let Some(d) = params.draft {
+        arguments["draft"] = serde_json::json!(d);
+    }
+
+    let mcp = McpClient::new()?;
+    let result = mcp
+        .call_tool(McpToolCall {
+            name: "create_remediation_pr".to_string(),
+            arguments,
+        })
+        .await;
+
+    match result {
+        Ok(tool_result) if tool_result.success => {
+            let parsed = tool_result.result.unwrap_or(serde_json::json!({}));
+            let pr: RemediationPrResult =
+                serde_json::from_value(parsed).unwrap_or_else(|_| RemediationPrResult {
+                    status: "error".to_string(),
+                    error: Some("Could not parse MCP response".to_string()),
+                    ..Default::default()
+                });
+            if pr.status == "error" {
+                return Err(AppError::Mcp(format!(
+                    "Remediation PR failed: {}",
+                    pr.error.clone().unwrap_or_default()
+                )));
+            }
+            Ok(pr)
+        }
+        Ok(tool_result) => {
+            let error_msg = tool_result
+                .error
+                .unwrap_or_else(|| "MCP tool failed".to_string());
+            Err(AppError::Mcp(format!("Remediation PR failed: {}", error_msg)))
+        }
+        Err(e) => Err(e),
+    }
+}
+
 #[tauri::command]
 pub async fn create_scan_snapshot(assessment_id: String) -> Result<ScanSnapshot> {
     info!("Creating scan snapshot for assessment: {}", assessment_id);

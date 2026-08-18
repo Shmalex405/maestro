@@ -411,7 +411,7 @@ export default function IntegrationsPage() {
               </div>
               <div>
                 <CardTitle>GitHub</CardTitle>
-                <CardDescription>Access private repositories for security scanning</CardDescription>
+                <CardDescription>Scan private repositories and open draft remediation PRs for code findings</CardDescription>
               </div>
             </div>
             <Switch

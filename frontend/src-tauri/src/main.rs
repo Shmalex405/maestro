@@ -140,6 +140,7 @@ fn main() {
             commands::findings::get_findings_stats,
             commands::findings::export_findings,
             commands::findings::create_jira_ticket,
+            commands::findings::create_remediation_pr,
             commands::findings::create_scan_snapshot,
             commands::findings::list_scan_history,
             // Reports

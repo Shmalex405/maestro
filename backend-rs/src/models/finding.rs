@@ -23,6 +23,23 @@ pub struct Finding {
     pub cvss_score: Option<String>,
     pub jira_ticket: Option<String>,
     pub jira_url: Option<String>,
+    // Code context (SAST/code findings). Migration 0051 — previously dropped on
+    // promotion; persisted so code findings carry their fix data to the
+    // dashboard and drive the remediation-PR splice.
+    pub file_path: Option<String>,
+    pub line_start: Option<i32>,
+    pub line_end: Option<i32>,
+    pub code_snippet: Option<String>,
+    pub remediation_code: Option<String>,
+    pub remediation_explanation: Option<String>,
+    /// JSON-encoded array of {file, line, context, commit_hash, author}.
+    pub file_locations: Option<String>,
+    // Remediation PR linkage (migration 0051). Parallels jira_ticket/jira_url —
+    // set when a draft fix PR is opened, surfaced as a PR chip in the UI.
+    pub pr_url: Option<String>,
+    pub pr_status: Option<String>,
+    pub pr_branch: Option<String>,
+    pub pr_number: Option<i32>,
     pub source: Option<String>,
     pub source_id: Option<String>,
     /// 'true' | 'potentially' | 'false' | NULL — see migration 0006 for semantics.

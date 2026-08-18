@@ -1,5 +1,6 @@
-import { upsertFinding, getFindings, getFindingsForAssessment, generateReportContent, FindingInput, saveReportRecord, compareAssessments } from "../integrations/findings-db";
-import { createJiraTicket, listJiraProjects, listJiraBoards } from "../integrations/jira";
+import { upsertFinding, getFindings, getFindingsForAssessment, generateReportContent, FindingInput, saveReportRecord, compareAssessments, getFindingById } from "../integrations/findings-db";
+import { createJiraTicket, createJiraTicketFromReport, listJiraProjects, listJiraBoards, addJiraRemoteLink } from "../integrations/jira";
+import { openRemediationPR, recordFindingPR, type FileEdit } from "../integrations/github";
 import { uploadToSharePoint } from "../integrations/sharepoint";
 import { sendEmail } from "../integrations/email";
 import { generateProfessionalHtml } from "../integrations/report-html-template";
@@ -65,6 +66,24 @@ export const reportingTools = [
         priority: { type: "string", enum: ["Lowest", "Low", "Medium", "High", "Highest"] },
       },
       required: ["finding_id", "project_key"],
+    },
+  },
+  {
+    name: "create_remediation_pr",
+    description:
+      "For a CODE-associated finding whose fix is known (file location + remediation_code), open a DRAFT pull request in the mapped GitHub repo that applies the fix, and cross-link it with Jira. If the finding has no ticket and project_key is given, the ticket is created too and linked both ways. ALWAYS opens as a draft for human review — it never merges. Only valid for findings carrying file_path + line_start + line_end + remediation_code (SAST / code / dependency-manifest fixes); misconfiguration/infra findings have no code to change and should use create_jira_ticket instead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        finding_id: { type: "string", description: "Finding ID to remediate. Must be code-associated with a concrete fix snippet." },
+        owner: { type: "string", description: "GitHub repo owner/org the fix targets (e.g. 'acme-corp')." },
+        repo: { type: "string", description: "GitHub repo name (e.g. 'payments-api')." },
+        base_branch: { type: "string", description: "Base branch to target. Defaults to the repo's default branch." },
+        project_key: { type: "string", description: "Jira project key. When the finding has no ticket yet, one is created here and linked to the PR." },
+        priority: { type: "string", enum: ["Lowest", "Low", "Medium", "High", "Highest"], description: "Jira priority when creating a new ticket." },
+        draft: { type: "boolean", description: "Open as draft (default true). Keep true — remediation PRs are always human-reviewed before merge." },
+      },
+      required: ["finding_id", "owner", "repo"],
     },
   },
   {
@@ -461,6 +480,200 @@ export const reportingHandlers: Record<string, Function> = {
     const { finding_id, project_key, priority = "Medium" } = args;
     const result = await createJiraTicket(finding_id, project_key, priority);
     return JSON.stringify(result);
+  },
+
+  create_remediation_pr: async (args: {
+    finding_id: string;
+    owner: string;
+    repo: string;
+    base_branch?: string;
+    project_key?: string;
+    priority?: string;
+    draft?: boolean;
+  }) => {
+    const { finding_id, owner, repo, base_branch, project_key, priority = "Medium", draft = true } = args;
+
+    // Resolve the finding from the local store, falling back to the cloud
+    // backend for managed deployments — there the desktop Findings UI is
+    // cloud-backed and passes a cloud finding id the local store never held.
+    // The cloud FindingResponse carries the code-context fields (migration
+    // 0051), so the splice below works from either source.
+    let finding = getFindingById(finding_id) as any;
+    let fromCloud = false;
+    if (!finding && hasCloudSession()) {
+      try {
+        finding = await cloudRequest(`/findings/${finding_id}`);
+        fromCloud = !!finding;
+      } catch {
+        /* fall through to not-found */
+      }
+    }
+    if (!finding) {
+      return JSON.stringify({ status: "error", error: `Finding not found: ${finding_id}` });
+    }
+
+    // Only code-associated findings get a PR. Build the fix as a line-range
+    // splice of the finding's remediation_code into the affected file. A finding
+    // without a precise location + fix snippet (misconfig/infra) can't produce a
+    // reviewable diff — the caller should use create_jira_ticket for those.
+    const edits: FileEdit[] = [];
+    if (
+      finding.file_path &&
+      finding.remediation_code &&
+      finding.line_start != null &&
+      finding.line_end != null
+    ) {
+      edits.push({
+        path: finding.file_path,
+        mode: "splice",
+        content: finding.remediation_code,
+        lineStart: finding.line_start,
+        lineEnd: finding.line_end,
+      });
+    }
+    if (edits.length === 0) {
+      return JSON.stringify({
+        status: "error",
+        error:
+          "Finding is not a code-associated fix (needs file_path + line_start + line_end + remediation_code). " +
+          "Misconfiguration/infra findings have no code to change — use create_jira_ticket instead.",
+      });
+    }
+
+    // Resolve the Jira ticket: reuse the finding's existing one, else create a
+    // new ticket when a project_key was supplied. The PR still opens if neither.
+    let jiraKey: string | undefined = finding.jira_ticket || undefined;
+    let jiraUrl: string | undefined = finding.jira_url || undefined;
+    let ticketCreated = false;
+    if (!jiraKey && project_key) {
+      if (fromCloud) {
+        // The local createJiraTicket looks the finding up in the local DB, which
+        // a cloud finding isn't in — build the ticket from content instead.
+        const md = [
+          finding.description || "",
+          finding.file_path ? `\n**Location:** \`${finding.file_path}\` lines ${finding.line_start}–${finding.line_end}` : "",
+          finding.remediation ? `\n### Remediation\n${finding.remediation}` : "",
+        ].filter(Boolean).join("\n");
+        const t = await createJiraTicketFromReport({
+          projectKey: project_key,
+          epicKey: "",
+          summary: `[Security] ${finding.title}`,
+          markdownBody: md,
+          priority,
+          labels: ["security", finding.severity].filter(Boolean),
+        });
+        if (t.status === "created" && t.ticket_key) {
+          jiraKey = t.ticket_key;
+          jiraUrl = t.url;
+          ticketCreated = true;
+        }
+      } else {
+        const t = await createJiraTicket(finding_id, project_key, priority);
+        if (t.status === "created" && t.ticket_key) {
+          jiraKey = t.ticket_key;
+          ticketCreated = true;
+        }
+      }
+    }
+
+    const slug = String(finding.title || "fix")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "")
+      .slice(0, 40);
+    const branch = `maestro-fix/${jiraKey || finding_id.slice(0, 8)}-${slug}`;
+    const title = `[Security] ${finding.title}${jiraKey ? ` (${jiraKey})` : ""}`;
+
+    // PR body doubles as the PR → Jira link (the key in the body/branch/title is
+    // what Jira's dev panel keys off when the GitHub app is connected).
+    const body = [
+      `## Automated remediation${jiraKey ? ` for ${jiraKey}` : ""}`,
+      ``,
+      `**Severity:** ${(finding.severity || "").toUpperCase()}  ·  **Finding:** \`${finding_id}\``,
+      finding.cwe ? `**CWE:** ${finding.cwe}` : "",
+      finding.cve ? `**CVE:** ${finding.cve}` : "",
+      ``,
+      finding.description || "",
+      ``,
+      `### Location`,
+      `\`${finding.file_path}\` lines ${finding.line_start}–${finding.line_end}`,
+      finding.remediation_explanation ? `\n### Why this fix\n${finding.remediation_explanation}` : "",
+      finding.evidence ? `\n### Evidence\n\`\`\`\n${String(finding.evidence).slice(0, 4000)}\n\`\`\`` : "",
+      ``,
+      `---`,
+      `> Opened as a **draft** by Maestro from an approved security finding. Review the diff before merging.`,
+      jiraKey ? `> Linked Jira issue: **${jiraKey}**` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const pr = await openRemediationPR({
+      owner,
+      repo,
+      baseBranch: base_branch,
+      branch,
+      title,
+      body,
+      edits,
+      draft,
+    });
+
+    if (pr.status !== "created") {
+      return JSON.stringify({
+        status: "error",
+        error: pr.error,
+        jira_ticket: jiraKey,
+        ticket_created: ticketCreated,
+      });
+    }
+
+    // Persist the linkage so the Findings UI can render a PR chip. Write it back
+    // to wherever the finding lives: the local store for a local id, the cloud
+    // finding for a managed (cloud-backed) id so the chip survives a reload.
+    const prStatus = draft ? "draft" : "open";
+    if (!fromCloud) {
+      recordFindingPR(finding_id, { url: pr.url, number: pr.number, branch: pr.branch, status: prStatus });
+    }
+    let cloudLinked = false;
+    if (fromCloud) {
+      try {
+        await cloudRequest(`/findings/${finding_id}`, {
+          method: "PATCH",
+          body: {
+            pr_url: pr.url,
+            pr_status: prStatus,
+            pr_branch: pr.branch,
+            pr_number: pr.number,
+            // Carry a freshly-created ticket back to the cloud row too, so both
+            // chips persist on the dashboard.
+            ...(ticketCreated && jiraKey ? { jira_ticket: jiraKey } : {}),
+            ...(ticketCreated && jiraUrl ? { jira_url: jiraUrl } : {}),
+          },
+        });
+        cloudLinked = true;
+      } catch {
+        /* best-effort — the PR + Jira link already succeeded */
+      }
+    }
+
+    // Cross-link Jira → PR (PR → Jira already lives in the branch/title/body).
+    let jiraLinked = false;
+    if (jiraKey && pr.url) {
+      const link = await addJiraRemoteLink(jiraKey, pr.url, title);
+      jiraLinked = link.status === "ok";
+    }
+
+    return JSON.stringify({
+      status: "created",
+      pr_url: pr.url,
+      pr_number: pr.number,
+      pr_branch: pr.branch,
+      pr_status: prStatus,
+      jira_ticket: jiraKey,
+      ticket_created: ticketCreated,
+      jira_linked: jiraLinked,
+      cloud_linked: cloudLinked,
+    });
   },
 
   upload_report: async (args: { report_content: string; filename: string; email_recipients?: string[] }) => {

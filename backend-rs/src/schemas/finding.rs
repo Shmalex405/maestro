@@ -650,6 +650,23 @@ pub struct FindingCreate {
     /// accepted. See docs/oracle-verification-layer.md.
     #[serde(default)]
     pub claimed_mechanism: Option<String>,
+    // Code context (migration 0051). Sent by the MCP promotion path; persisted
+    // so SAST/code findings carry their fix data to the dashboard. Previously
+    // dropped because these fields were absent here.
+    #[serde(default)]
+    pub file_path: Option<String>,
+    #[serde(default)]
+    pub line_start: Option<i32>,
+    #[serde(default)]
+    pub line_end: Option<i32>,
+    #[serde(default)]
+    pub code_snippet: Option<String>,
+    #[serde(default)]
+    pub remediation_code: Option<String>,
+    #[serde(default)]
+    pub remediation_explanation: Option<String>,
+    #[serde(default)]
+    pub file_locations: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -668,6 +685,16 @@ pub struct FindingUpdate {
     pub jira_ticket: Option<String>,
     #[serde(default)]
     pub jira_url: Option<String>,
+    /// Remediation PR linkage (migration 0051). PATCHed by create_remediation_pr
+    /// after a draft PR is opened, so the PR chip persists on cloud findings.
+    #[serde(default)]
+    pub pr_url: Option<String>,
+    #[serde(default)]
+    pub pr_status: Option<String>,
+    #[serde(default)]
+    pub pr_branch: Option<String>,
+    #[serde(default)]
+    pub pr_number: Option<i32>,
     /// Calibrated severity override. Set to "null" string or omit to leave
     /// the column unchanged (cannot clear via PATCH right now — by design;
     /// the calibrator never un-calibrates). Migration 0016.
@@ -721,6 +748,20 @@ pub struct FindingResponse {
     pub cvss_score: Option<String>,
     pub jira_ticket: Option<String>,
     pub jira_url: Option<String>,
+    // Code context (migration 0051). Drives the finding detail code view and the
+    // "Open Fix PR" gate/preview + the tool's splice for cloud findings.
+    pub file_path: Option<String>,
+    pub line_start: Option<i32>,
+    pub line_end: Option<i32>,
+    pub code_snippet: Option<String>,
+    pub remediation_code: Option<String>,
+    pub remediation_explanation: Option<String>,
+    pub file_locations: Option<String>,
+    // Remediation PR linkage (migration 0051).
+    pub pr_url: Option<String>,
+    pub pr_status: Option<String>,
+    pub pr_branch: Option<String>,
+    pub pr_number: Option<i32>,
     pub source: Option<String>,
     pub source_id: Option<String>,
     /// Derived from `source`. One of: vuln_scan, web_app, code_security,
@@ -858,6 +899,17 @@ impl From<&Finding> for FindingResponse {
             cvss_score: f.cvss_score.clone(),
             jira_ticket: f.jira_ticket.clone(),
             jira_url: f.jira_url.clone(),
+            file_path: f.file_path.clone(),
+            line_start: f.line_start,
+            line_end: f.line_end,
+            code_snippet: f.code_snippet.clone(),
+            remediation_code: f.remediation_code.clone(),
+            remediation_explanation: f.remediation_explanation.clone(),
+            file_locations: f.file_locations.clone(),
+            pr_url: f.pr_url.clone(),
+            pr_status: f.pr_status.clone(),
+            pr_branch: f.pr_branch.clone(),
+            pr_number: f.pr_number,
             source: f.source.clone(),
             source_id: f.source_id.clone(),
             category: category_from_source(f.source.as_deref()).to_string(),

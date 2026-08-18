@@ -118,6 +118,8 @@ import type {
   GenerateReportResult,
   CreateJiraTicketParams,
   CreateJiraTicketResult,
+  CreateRemediationPrParams,
+  CreateRemediationPrResult,
   ImportCycodeFindingsParams,
   ImportCycodeFindingsResult,
   CycodeFinding,
@@ -2036,6 +2038,20 @@ export const api = {
       isTauri()
         ? invoke('create_jira_ticket', { finding_id: id, ...params })
         : httpRequest(`/api/findings/${id}/jira`, {
+            method: 'POST',
+            body: JSON.stringify(params),
+          }),
+
+    /** Open a DRAFT remediation PR for a code-associated finding, and optionally
+     *  create + cross-link a Jira ticket. Like createJiraTicket this stays
+     *  local-routed on desktop (the GitHub PAT is a per-user secret in the local
+     *  integrations config, never sent to cloud); web falls back to the
+     *  mcp-server HTTP route. Only valid for findings with a code location + a
+     *  remediation_code snippet — the UI gates the action on that. */
+    createRemediationPr: (id: string, params: CreateRemediationPrParams): Promise<CreateRemediationPrResult> =>
+      isTauri()
+        ? invoke('create_remediation_pr', { finding_id: id, ...params })
+        : httpRequest(`/api/findings/${id}/remediation-pr`, {
             method: 'POST',
             body: JSON.stringify(params),
           }),

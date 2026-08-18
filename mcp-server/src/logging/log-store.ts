@@ -296,6 +296,16 @@ function runMigrations(db: Database.Database): void {
   addColumnSafely("findings", "component", "TEXT");
   addColumnSafely("findings", "image_digest", "TEXT");
 
+  // Remediation PR columns. When a code-associated finding's fix is approved,
+  // create_remediation_pr opens a draft PR in the mapped GitHub repo and stores
+  // the linkage here so the Findings UI can render a PR chip alongside the Jira
+  // chip. pr_status mirrors the GitHub PR state ("draft" | "open" | "merged" |
+  // "closed"); pr_branch/pr_number identify the branch and PR for later syncs.
+  addColumnSafely("findings", "pr_url", "TEXT");
+  addColumnSafely("findings", "pr_status", "TEXT");
+  addColumnSafely("findings", "pr_branch", "TEXT");
+  addColumnSafely("findings", "pr_number", "INTEGER");
+
   // Oracle verdict columns (mirror backend migration 0049). A verdict is EARNED
   // by a named oracle in code — create_finding can never write these, it can only
   // ever produce `candidate`. See verification/oracles.ts and

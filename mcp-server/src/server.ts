@@ -153,6 +153,7 @@ export const LOCAL_ONLY_TOOLS = [
   "generate_report",
   "generate_pdf_report",
   "import_cycode_findings",
+  "create_remediation_pr",
   // Agent tools - these handle their own scope validation internally
   "run_orchestrator",
   "run_recon_agent",

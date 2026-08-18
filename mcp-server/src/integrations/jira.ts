@@ -1009,6 +1009,54 @@ export async function createJiraTicketFromReport(
   }
 }
 
+// ─── Dev-panel cross-linking (PR ↔ issue) ────────────────────────────────────
+
+/**
+ * Attach a remote link on a Jira issue pointing at a GitHub PR. This is the
+ * Jira-native way to surface the PR on the ticket ("Web links" panel) without
+ * requiring the GitHub-for-Jira app. The reciprocal direction (PR → issue) is
+ * handled by putting the issue key in the PR branch/title/body.
+ */
+export async function addJiraRemoteLink(
+  issueKey: string,
+  url: string,
+  title: string,
+): Promise<{ status: string; error?: string }> {
+  const config = getJiraConfig();
+  if (!config.base_url || !config.api_token) {
+    return { status: "error", error: "Jira not configured" };
+  }
+  try {
+    const response = await fetch(
+      `${config.base_url}/rest/api/3/issue/${encodeURIComponent(issueKey)}/remotelink`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: makeAuthHeader(config),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          object: {
+            url,
+            title,
+            icon: {
+              url16x16: "https://github.githubassets.com/favicons/favicon.png",
+              title: "GitHub",
+            },
+          },
+        }),
+      },
+    );
+    if (!response.ok) {
+      const text = await response.text();
+      return { status: "error", error: `HTTP ${response.status}: ${text}` };
+    }
+    return { status: "ok" };
+  } catch (error) {
+    return { status: "error", error: String(error) };
+  }
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function severityToPriority(severity: string): string {

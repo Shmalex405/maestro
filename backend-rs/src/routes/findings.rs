@@ -583,6 +583,8 @@ async fn create_finding(
                port, service, component, image_digest, scan_id,
                verdict, oracle_kind, receipt_json, capsule_json,
                replay_n, replay_successes, verified_at, claimed_mechanism,
+               file_path, line_start, line_end, code_snippet,
+               remediation_code, remediation_explanation, file_locations,
                first_seen_at, last_seen_at)
            VALUES ($1,$2,$3,$4::severity,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
                    $17,$18,$19,$20,
@@ -590,6 +592,7 @@ async fn create_finding(
                    $24::validationsource,$25,$26,
                    $27,$28,$29,$30,$31,
                    COALESCE($32,'candidate'),$33,$34,$35,$36,$37,$38,$39,
+                   $40,$41,$42,$43,$44,$45,$46,
                    NOW(),NOW())
            ON CONFLICT (fingerprint, org_id) WHERE fingerprint IS NOT NULL
            DO UPDATE SET
@@ -663,6 +666,16 @@ async fn create_finding(
                    WHEN EXCLUDED.exploitable IN ('true','potentially') THEN NULL
                    ELSE findings.remediated_in_assessment_id
                END,
+               -- Code context (migration 0051): new non-NULL value wins, else
+               -- preserve prior — a later DAST re-POST (no code fields) keeps
+               -- the SAST context that drives the remediation-PR action.
+               file_path               = COALESCE(EXCLUDED.file_path, findings.file_path),
+               line_start              = COALESCE(EXCLUDED.line_start, findings.line_start),
+               line_end                = COALESCE(EXCLUDED.line_end, findings.line_end),
+               code_snippet            = COALESCE(EXCLUDED.code_snippet, findings.code_snippet),
+               remediation_code        = COALESCE(EXCLUDED.remediation_code, findings.remediation_code),
+               remediation_explanation = COALESCE(EXCLUDED.remediation_explanation, findings.remediation_explanation),
+               file_locations          = COALESCE(EXCLUDED.file_locations, findings.file_locations),
                updated_at       = NOW()
            RETURNING findings.id, (xmax = 0) AS is_new"#,
     )
@@ -705,6 +718,13 @@ async fn create_finding(
     .bind(req.replay_successes)
     .bind(req.verified_at)
     .bind(&req.claimed_mechanism)
+    .bind(&req.file_path)
+    .bind(req.line_start)
+    .bind(req.line_end)
+    .bind(&req.code_snippet)
+    .bind(&req.remediation_code)
+    .bind(&req.remediation_explanation)
+    .bind(&req.file_locations)
     .fetch_one(&state.pool)
     .await?;
 
@@ -774,6 +794,12 @@ async fn update_finding(
                                      WHEN $14 THEN NOW() ELSE NULL END,
                   attested_by = CASE WHEN $14::boolean IS NULL THEN attested_by
                                      WHEN $14 THEN $15 ELSE NULL END,
+                  -- Remediation PR linkage (migration 0051). PATCHed by
+                  -- create_remediation_pr after a draft PR is opened.
+                  pr_url = COALESCE($16, pr_url),
+                  pr_status = COALESCE($17, pr_status),
+                  pr_branch = COALESCE($18, pr_branch),
+                  pr_number = COALESCE($19, pr_number),
                   updated_at = NOW()
             WHERE id = $1
             RETURNING *"#,
@@ -793,6 +819,10 @@ async fn update_finding(
     .bind(&req.tags)
     .bind(req.attest)
     .bind(&user.id)
+    .bind(&req.pr_url)
+    .bind(&req.pr_status)
+    .bind(&req.pr_branch)
+    .bind(req.pr_number)
     .fetch_one(&state.pool)
     .await?;
 

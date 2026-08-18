@@ -374,3 +374,31 @@ findingsRouter.post("/:id/jira", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Failed to create Jira ticket" });
   }
 });
+
+// Open a draft remediation PR (and optionally a linked Jira ticket) for a
+// code-associated finding. Reuses the create_remediation_pr tool handler so the
+// web path and the desktop MCP-tool path share one implementation.
+findingsRouter.post("/:id/remediation-pr", async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { owner, repo, base_branch, project_key, priority, draft } = req.body || {};
+    if (!owner || !repo) {
+      return res.status(400).json({ error: "owner and repo are required" });
+    }
+    const { reportingHandlers } = await import("../../tools/reporting");
+    const raw = await reportingHandlers.create_remediation_pr({
+      finding_id: id,
+      owner,
+      repo,
+      base_branch,
+      project_key,
+      priority,
+      draft,
+    });
+    const parsed = JSON.parse(raw);
+    return res.status(parsed.status === "error" ? 400 : 200).json(parsed);
+  } catch (error) {
+    console.error("Error creating remediation PR:", error);
+    res.status(500).json({ error: "Failed to create remediation PR" });
+  }
+});
