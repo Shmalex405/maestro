@@ -585,6 +585,14 @@ pub async fn save_credentials_config(config: CredentialsConfig) -> Result<()> {
         .map_err(|e| AppError::Config(format!("Failed to serialize config: {}", e)))?;
 
     std::fs::write(&config_path, yaml)?;
+    // Owner-only perms: in local single-operator mode this file holds plaintext
+    // app passwords / tokens (no keychain split), so keep it unreadable by
+    // other users on the machine.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600));
+    }
     info!("Credentials configuration saved to {:?}", config_path);
 
     Ok(())
@@ -1184,6 +1192,12 @@ pub async fn save_integrations_config(config: IntegrationsConfig) -> Result<Inte
         .map_err(|e| AppError::Config(format!("Failed to serialize config: {}", e)))?;
 
     std::fs::write(&config_path, content)?;
+    // Owner-only perms: holds the GitHub PAT + Jira API token in local mode.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600));
+    }
 
     Ok(config)
 }

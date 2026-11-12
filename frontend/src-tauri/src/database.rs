@@ -609,6 +609,23 @@ impl Database {
             "validation_method TEXT",
             "source_tool TEXT",
             "evidence_type TEXT",
+            // Engine-side columns (oracle verification + remediation-PR), added so
+            // the in-container MCP server can write findings straight into THIS
+            // (the desktop's) DB when DB_PATH points here — see docker.rs. Without
+            // them, the engine's INSERTs fail with "no such column" and local-mode
+            // findings never reach the desktop UI. Local store unification.
+            "verdict TEXT DEFAULT 'candidate'",
+            "oracle_kind TEXT",
+            "receipt_json TEXT",
+            "capsule_json TEXT",
+            "replay_n INTEGER",
+            "replay_successes INTEGER",
+            "verified_at TEXT",
+            "claimed_mechanism TEXT",
+            "pr_url TEXT",
+            "pr_status TEXT",
+            "pr_branch TEXT",
+            "pr_number INTEGER",
         ] {
             let _ = self
                 .conn

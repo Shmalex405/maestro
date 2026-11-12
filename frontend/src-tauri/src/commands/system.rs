@@ -908,7 +908,19 @@ pub async fn restart_docker_desktop() -> Result<()> {
 pub async fn check_kali_image_exists() -> Result<bool> {
     info!("Checking if Kali Docker image exists");
     let docker = DockerManager::new().await?;
-    docker.image_exists().await
+    if docker.image_exists().await? {
+        return Ok(true);
+    }
+    // The pinned tag is absent. Before the startup gate tells the user to pull
+    // a multi-GB private image (which local mode can't authenticate), try to
+    // reuse a compatible cached toolkit — a prior version's byte-identical
+    // image — by retagging it. A version bump that didn't change `docker/`
+    // then costs nothing.
+    if docker.reuse_compatible_toolkit_image().await? {
+        info!("Reused a cached toolkit image for the pinned tag");
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 /// Structured progress payload emitted to the front-end so the startup

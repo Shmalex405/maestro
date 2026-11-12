@@ -815,6 +815,10 @@ async function cloudRequestOrDefault<T>(
 let notifiedSessionExpired = false;
 async function notifyCloudSessionExpired(): Promise<void> {
   if (typeof window === 'undefined') return;
+  // Local mode has no cloud session to expire. A stray cloudRequest that
+  // slips through in local mode must never nag the single operator to "sign
+  // in again" — there is nothing to sign into. Suppress the toast entirely.
+  if (isLocalMode()) return;
   if (notifiedSessionExpired) return;
   notifiedSessionExpired = true;
   setTimeout(() => { notifiedSessionExpired = false; }, 30_000);
@@ -1629,19 +1633,25 @@ export const api = {
      *  execution overview renders a labeled placeholder for that case rather
      *  than erroring. */
     listTestResults: (id: string): Promise<import('./types').ExecutionTestResult[]> =>
-      cloudRequestOrDefault(
-        `/assessments/${id}/test-results`,
-        [] as import('./types').ExecutionTestResult[],
-      ),
+      // Local mode: no read command over the local assessment_test_results table
+      // yet — return empty (panel shows its labeled placeholder) instead of 401.
+      isLocalMode()
+        ? Promise.resolve([] as import('./types').ExecutionTestResult[])
+        : cloudRequestOrDefault(
+            `/assessments/${id}/test-results`,
+            [] as import('./types').ExecutionTestResult[],
+          ),
 
     /** Scope-validation decisions recorded at tool-dispatch time (both allowed
      *  and rejected calls), rolled up per (target, in_scope). Graceful-404 /
      *  empty for the same reason as listTestResults. */
     listScopeDecisions: (id: string): Promise<import('./types').ScopeTargetDecision[]> =>
-      cloudRequestOrDefault(
-        `/assessments/${id}/scope-decisions`,
-        [] as import('./types').ScopeTargetDecision[],
-      ),
+      isLocalMode()
+        ? Promise.resolve([] as import('./types').ScopeTargetDecision[])
+        : cloudRequestOrDefault(
+            `/assessments/${id}/scope-decisions`,
+            [] as import('./types').ScopeTargetDecision[],
+          ),
 
     /** Create a new assessment */
     create: (data: {
@@ -1763,10 +1773,12 @@ export const api = {
      *  open. Both list and create are graceful-404 — older backends
      *  without the endpoint just see an empty timeline. */
     listEvents: (id: string, params?: { event_type?: string; limit?: number }): Promise<AssessmentEvent[]> =>
-      cloudRequestOrDefault(
-        `/assessments/${id}/events${buildQuery(params as Record<string, unknown>)}`,
-        [] as AssessmentEvent[],
-      ),
+      isLocalMode()
+        ? Promise.resolve([] as AssessmentEvent[])
+        : cloudRequestOrDefault(
+            `/assessments/${id}/events${buildQuery(params as Record<string, unknown>)}`,
+            [] as AssessmentEvent[],
+          ),
 
     createEvent: (
       id: string,
@@ -1936,10 +1948,18 @@ export const api = {
 
     /** Assign an assessment to a project (or unassign if projectId is null) */
     assignAssessment: (assessmentId: string, projectId: string | null): Promise<void> =>
-      cloudRequest(`/assessments/${assessmentId}/project`, {
-        method: 'PUT',
-        body: JSON.stringify({ project_id: projectId }),
-      }),
+      route(
+        () =>
+          invoke('assign_assessment_to_project', {
+            assessment_id: assessmentId,
+            project_id: projectId,
+          }),
+        () =>
+          cloudRequest(`/assessments/${assessmentId}/project`, {
+            method: 'PUT',
+            body: JSON.stringify({ project_id: projectId }),
+          }),
+      ),
   },
 
   // ===========================================================================
@@ -2078,7 +2098,12 @@ export const api = {
     /** Coverage rollup (dashboard W3 heatmap): findings grouped by
      *  (category, surface) with count + worst severity per cell. */
     coverage: (): Promise<CoverageCell[]> =>
-      cloudRequestOrDefault('/findings/coverage', [] as CoverageCell[]),
+      // No server-side coverage rollup in local mode — the dashboard heatmap
+      // renders empty rather than 401ing. (A local aggregation over the
+      // findings table could populate it later; not wired yet.)
+      isLocalMode()
+        ? Promise.resolve([] as CoverageCell[])
+        : cloudRequestOrDefault('/findings/coverage', [] as CoverageCell[]),
 
     /** Export findings */
     export: (format: 'json' | 'csv' | 'markdown', filter?: FindingsFilter): Promise<string> =>
@@ -2119,10 +2144,14 @@ export const api = {
       source?: string;
       application_id?: string;
     }): Promise<Target[]> =>
-      cloudRequestOrDefault(
-        `/targets${buildQuery(params as Record<string, unknown>)}`,
-        [] as Target[],
-      ),
+      // Targets are a scheduled-DAST / cloud concept — none exist in local
+      // mode, so return empty instead of hitting the cloud.
+      isLocalMode()
+        ? Promise.resolve([] as Target[])
+        : cloudRequestOrDefault(
+            `/targets${buildQuery(params as Record<string, unknown>)}`,
+            [] as Target[],
+          ),
 
     /** Get a single target by id. */
     get: (id: string): Promise<Target> => cloudRequest(`/targets/${id}`),
@@ -2325,12 +2354,15 @@ export const api = {
      *  Read-only join of exposed cloud_assets × CVE findings × reachability.
      *  Omit target_id for an org-wide view. */
     correlations: (params?: { target_id?: string }): Promise<CloudCorrelation[]> =>
-      cloudRequestOrDefault(
-        `/cloud/inventory/correlations${
-          params?.target_id ? buildQuery(params as Record<string, unknown>) : ''
-        }`,
-        [] as CloudCorrelation[],
-      ),
+      // Cloud inventory correlation is a cloud-only join — empty in local mode.
+      isLocalMode()
+        ? Promise.resolve([] as CloudCorrelation[])
+        : cloudRequestOrDefault(
+            `/cloud/inventory/correlations${
+              params?.target_id ? buildQuery(params as Record<string, unknown>) : ''
+            }`,
+            [] as CloudCorrelation[],
+          ),
 
     /** Persisted escalation / attack-path graphs (W5). Omit target_id for org-wide. */
     attackPaths: (params?: { target_id?: string }): Promise<PersistedAttackGraph[]> =>
@@ -2530,6 +2562,14 @@ export const api = {
       // Components expect typed arrays — provide a well-shaped empty default
       // so first-paint doesn't crash trying to .map() over undefined fields.
       get: async (): Promise<ScopeConfig> => {
+        if (isLocalMode()) {
+          // Local mode: read the on-disk scope.yml via the Rust config
+          // command. No cloud, no sign-in — single operator. Still mirror to
+          // the container's host file so the assessment runtime stays in sync.
+          const merged = await invoke<ScopeConfig>('get_scope_config');
+          void persistMergedScope(merged);
+          return merged;
+        }
         const r = await cloudRequest<{ value: Partial<ScopeConfig> }>('/configs/scope');
         const merged: ScopeConfig = {
           networks: r.value?.networks ?? [],
@@ -2547,6 +2587,13 @@ export const api = {
       },
 
       update: async (config: ScopeConfig): Promise<ScopeConfig> => {
+        if (isLocalMode()) {
+          // Local mode: persist to the on-disk scope.yml via Rust, then
+          // refresh the container's host-file mirror.
+          await invoke('save_scope_config', { config });
+          void persistMergedScope(config);
+          return config;
+        }
         const r = await cloudRequest<{ value: ScopeConfig }>('/configs/scope', {
           method: 'PUT',
           body: JSON.stringify({ value: config }),
@@ -2890,6 +2937,14 @@ export const api = {
     // UI components don't need to change.
     credentials: {
       get: async (): Promise<CredentialsConfig> => {
+        if (isLocalMode()) {
+          // Local mode: the full credential tree (including secrets) lives in
+          // the on-disk credentials.yml — single operator, no keychain split,
+          // no cloud. Mirror to the container's host file after reading.
+          const merged = await invoke<CredentialsConfig>('get_credentials_config');
+          void persistMergedCredentials(merged);
+          return merged;
+        }
         const [shared, secrets] = await Promise.all([
           cloudRequest<{ value: Partial<CredentialsConfig> | Record<string, never> }>('/configs/credentials')
             .then((r) => r.value as Partial<CredentialsConfig>)
@@ -2909,6 +2964,13 @@ export const api = {
       },
 
       update: async (config: CredentialsConfig): Promise<CredentialsConfig> => {
+        if (isLocalMode()) {
+          // Local mode: write the whole tree (incl. secrets) to
+          // credentials.yml via Rust, then refresh the container mirror.
+          await invoke('save_credentials_config', { config });
+          void persistMergedCredentials(config);
+          return config;
+        }
         const { shared, secrets } = splitCredentials(config);
         await Promise.all([
           cloudRequest<{ value: Partial<CredentialsConfig> }>('/configs/credentials', {
@@ -2956,29 +3018,47 @@ export const api = {
     },
 
     tools: {
+      // Local mode reads/writes config/tools.yml via Rust; cloud mode stores
+      // the org-shared tool params in the backend.
       get: (): Promise<ToolsConfig> =>
-        cloudRequest<{ value: ToolsConfig | Record<string, never> }>('/configs/tools').then(
-          (r) => (r.value as ToolsConfig) ?? ({} as ToolsConfig),
+        route(
+          () => invoke<ToolsConfig>('get_tools_config'),
+          () =>
+            cloudRequest<{ value: ToolsConfig | Record<string, never> }>('/configs/tools').then(
+              (r) => (r.value as ToolsConfig) ?? ({} as ToolsConfig),
+            ),
         ),
 
       update: (config: ToolsConfig): Promise<ToolsConfig> =>
-        cloudRequest<{ value: ToolsConfig }>('/configs/tools', {
-          method: 'PUT',
-          body: JSON.stringify({ value: config }),
-        }).then((r) => r.value),
+        route(
+          () => invoke('save_tools_config', { config }).then(() => config),
+          () =>
+            cloudRequest<{ value: ToolsConfig }>('/configs/tools', {
+              method: 'PUT',
+              body: JSON.stringify({ value: config }),
+            }).then((r) => r.value),
+        ),
     },
 
     agents: {
       get: (): Promise<AgentsConfig> =>
-        cloudRequest<{ value: AgentsConfig | Record<string, never> }>('/configs/agents').then(
-          (r) => (r.value as AgentsConfig) ?? ({} as AgentsConfig),
+        route(
+          () => invoke<AgentsConfig>('get_agents_config'),
+          () =>
+            cloudRequest<{ value: AgentsConfig | Record<string, never> }>('/configs/agents').then(
+              (r) => (r.value as AgentsConfig) ?? ({} as AgentsConfig),
+            ),
         ),
 
       update: (config: AgentsConfig): Promise<AgentsConfig> =>
-        cloudRequest<{ value: AgentsConfig }>('/configs/agents', {
-          method: 'PUT',
-          body: JSON.stringify({ value: config }),
-        }).then((r) => r.value),
+        route(
+          () => invoke('save_agents_config', { config }).then(() => config),
+          () =>
+            cloudRequest<{ value: AgentsConfig }>('/configs/agents', {
+              method: 'PUT',
+              body: JSON.stringify({ value: config }),
+            }).then((r) => r.value),
+        ),
     },
 
     cloud: {
@@ -3176,6 +3256,11 @@ export const api = {
       // stay in the OS keychain. Merged into IntegrationsConfig for the
       // UI; split on save.
       get: async (): Promise<IntegrationsConfig> => {
+        if (isLocalMode()) {
+          // Local mode: read integrations.yml via Rust — GitHub PAT + Jira
+          // token included (single-operator local store, no keychain split).
+          return await invoke<IntegrationsConfig>('get_integrations_config');
+        }
         const [shared, secrets] = await Promise.all([
           cloudRequest<{ value: Partial<IntegrationsConfig> | Record<string, never> }>('/configs/integrations')
             .then((r) => r.value as Partial<IntegrationsConfig>)
@@ -3190,6 +3275,11 @@ export const api = {
       },
 
       update: async (config: IntegrationsConfig): Promise<IntegrationsConfig> => {
+        if (isLocalMode()) {
+          // Local mode: write integrations.yml via Rust and return the
+          // persisted config.
+          return await invoke<IntegrationsConfig>('save_integrations_config', { config });
+        }
         const { shared, secrets } = splitIntegrations(config);
         await Promise.all([
           cloudRequest<{ value: Partial<IntegrationsConfig> }>('/configs/integrations', {
@@ -3267,6 +3357,10 @@ export const api = {
      *  current user's local clone path (from `repo-paths.json`) when one
      *  is set, so each teammate sees their own filesystem location. */
     list: async (): Promise<Repository[]> => {
+      // Local mode: the repositories table lives in the local SQLite, read
+      // directly. (Cloud mode merges cloud rows with each user's local clone
+      // path; local mode has a single operator, so the row already carries it.)
+      if (isLocalMode()) return invoke<Repository[]>('list_repositories');
       const [rows, localPaths] = await Promise.all([
         cloudRequestOrDefault('/repositories', [] as Repository[]),
         isTauri()
@@ -3281,6 +3375,7 @@ export const api = {
 
     /** Get a single repository by ID — same per-user path merge as list(). */
     get: async (id: string): Promise<Repository> => {
+      if (isLocalMode()) return invoke<Repository>('get_repository', { id });
       const [r, localPaths] = await Promise.all([
         cloudRequest<Repository>(`/repositories/${id}`),
         isTauri()
@@ -3293,6 +3388,9 @@ export const api = {
     /** Add a new repository — POST cloud, then save creator's local path
      *  to the per-user mapping so subsequent reads keep showing it. */
     add: async (params: AddRepositoryParams): Promise<Repository> => {
+      // Local mode: add_repository writes the row (and its local path) to the
+      // local SQLite in one call — no cloud POST + separate path mapping.
+      if (isLocalMode()) return invoke<Repository>('add_repository', { params });
       const created = await cloudRequest<Repository>('/repositories', {
         method: 'POST',
         body: JSON.stringify(params),
@@ -3316,11 +3414,15 @@ export const api = {
 
     /** Remove a repository */
     remove: (id: string): Promise<void> =>
-      cloudRequest(`/repositories/${id}`, { method: 'DELETE' }),
+      isLocalMode()
+        ? invoke('remove_repository', { id })
+        : cloudRequest(`/repositories/${id}`, { method: 'DELETE' }),
 
     /** Update repository settings */
     update: (id: string, params: Partial<AddRepositoryParams>): Promise<Repository> =>
-      cloudRequest(`/repositories/${id}`, { method: 'PATCH', body: JSON.stringify(params) }),
+      isLocalMode()
+        ? invoke<Repository>('update_repository', { id, params })
+        : cloudRequest(`/repositories/${id}`, { method: 'PATCH', body: JSON.stringify(params) }),
 
     /** Scan a repository for security issues */
     scan: (params: { id: string; scan_types?: string[] }): Promise<{ repository_id: string; findings_count: number; scan_duration_ms: number; findings: Array<{ rule_id: string; severity: string; message: string; file_path: string; line_start: number; line_end?: number; code_snippet?: string }> }> =>
@@ -3361,43 +3463,74 @@ export const api = {
         selected_indices?: number[];
       }
     ): Promise<ImportCsvResult> =>
-      cloudRequest('/imports', {
-        method: 'POST',
-        body: JSON.stringify({ csv_content: csvContent, ...options }),
-      }),
+      route(
+        () =>
+          invoke<ImportCsvResult>('import_csv', {
+            csv_content: csvContent,
+            name: options?.name ?? null,
+            source: options?.source ?? null,
+            filename: options?.filename ?? null,
+            selected_indices: options?.selected_indices ?? null,
+          }),
+        () =>
+          cloudRequest('/imports', {
+            method: 'POST',
+            body: JSON.stringify({ csv_content: csvContent, ...options }),
+          }),
+      ),
 
     /** List all imports — returns [] if /imports isn't yet on the backend. */
     list: (params?: ListImportsParams): Promise<Import[]> =>
-      cloudRequestOrDefault(
-        `/imports${buildQuery(params as Record<string, unknown>)}`,
-        [] as Import[],
+      route(
+        () => invoke<Import[]>('list_imports', { params: params ?? null }),
+        () =>
+          cloudRequestOrDefault(
+            `/imports${buildQuery(params as Record<string, unknown>)}`,
+            [] as Import[],
+          ),
       ),
 
     /** Get a single import by ID */
     get: (id: string): Promise<Import | null> =>
-      cloudRequest(`/imports/${id}`),
+      route(
+        () => invoke<Import | null>('get_import', { id }),
+        () => cloudRequest(`/imports/${id}`),
+      ),
 
     /** Delete an import and all its findings */
     delete: (id: string): Promise<void> =>
-      cloudRequest(`/imports/${id}`, { method: 'DELETE' }),
+      route(
+        () => invoke('delete_import', { id }),
+        () => cloudRequest(`/imports/${id}`, { method: 'DELETE' }),
+      ),
 
     /** Get import statistics */
     getStats: (): Promise<ImportStats> =>
-      cloudRequest('/imports/stats'),
+      route(
+        () => invoke<ImportStats>('get_import_stats'),
+        () => cloudRequest('/imports/stats'),
+      ),
   },
 
   importedFindings: {
     /** List imported findings — returns [] if /imported-findings isn't yet
      *  on the backend. */
     list: (params?: ListImportedFindingsParams): Promise<ImportedFinding[]> =>
-      cloudRequestOrDefault(
-        `/imported-findings${buildQuery(params as Record<string, unknown>)}`,
-        [] as ImportedFinding[],
+      route(
+        () => invoke<ImportedFinding[]>('list_imported_findings', { params: params ?? null }),
+        () =>
+          cloudRequestOrDefault(
+            `/imported-findings${buildQuery(params as Record<string, unknown>)}`,
+            [] as ImportedFinding[],
+          ),
       ),
 
     /** Get a single imported finding */
     get: (id: string): Promise<ImportedFinding | null> =>
-      cloudRequest(`/imported-findings/${id}`),
+      route(
+        () => invoke<ImportedFinding | null>('get_imported_finding', { id }),
+        () => cloudRequest(`/imported-findings/${id}`),
+      ),
 
     /** Update imported finding status */
     updateStatus: (
@@ -3406,14 +3539,24 @@ export const api = {
       linkedFindingId?: string,
       linkedAssessmentId?: string
     ): Promise<void> =>
-      cloudRequest(`/imported-findings/${id}/status`, {
-        method: 'PATCH',
-        body: JSON.stringify({
-          status,
-          linked_finding_id: linkedFindingId,
-          linked_assessment_id: linkedAssessmentId,
-        }),
-      }),
+      route(
+        () =>
+          invoke('update_imported_finding_status', {
+            id,
+            status,
+            linked_finding_id: linkedFindingId ?? null,
+            linked_assessment_id: linkedAssessmentId ?? null,
+          }),
+        () =>
+          cloudRequest(`/imported-findings/${id}/status`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              status,
+              linked_finding_id: linkedFindingId,
+              linked_assessment_id: linkedAssessmentId,
+            }),
+          }),
+      ),
 
     /** Link imported findings to a repository */
     linkToRepository: (findingIds: string[], repositoryId: string): Promise<void> =>
@@ -3424,14 +3567,21 @@ export const api = {
 
     /** Create validation assessment for imported findings */
     createValidationAssessment: (params: CreateValidationAssessmentParams): Promise<Assessment> =>
-      cloudRequest('/imported-findings/validate', {
-        method: 'POST',
-        body: JSON.stringify(params),
-      }),
+      route(
+        () => invoke<Assessment>('create_validation_assessment', { params }),
+        () =>
+          cloudRequest('/imported-findings/validate', {
+            method: 'POST',
+            body: JSON.stringify(params),
+          }),
+      ),
 
     /** Get pending validation findings (shortcut) */
     getPending: (): Promise<ImportedFinding[]> =>
-      cloudRequest('/imported-findings?status=imported'),
+      route(
+        () => invoke<ImportedFinding[]>('list_imported_findings', { params: { status: 'imported' } }),
+        () => cloudRequest('/imported-findings?status=imported'),
+      ),
   },
 
   // Legacy alias for backwards compatibility
@@ -3563,9 +3713,29 @@ export const api = {
       page?: number;
       limit?: number;
     }): Promise<PaginatedResult<AuditLog>> =>
-      cloudRequestOrDefault(
-        `/audit-logs${buildQuery(params as Record<string, unknown>)}`,
-        { data: [], total: 0, page: 1, limit: params?.limit ?? 50, hasMore: false } as PaginatedResult<AuditLog>,
+      route(
+        // Local mode: read the local audit_logs table. get_audit_logs returns a
+        // flat Vec (limit/offset only — no tool/target filtering locally), so
+        // wrap it into the PaginatedResult shape the page expects.
+        async () => {
+          const limit = params?.limit ?? 50;
+          const offset = params?.page ? (params.page - 1) * limit : 0;
+          const rows = await invoke<AuditLog[]>('get_audit_logs', {
+            params: { limit, offset },
+          });
+          return {
+            data: rows,
+            total: rows.length,
+            page: params?.page ?? 1,
+            limit,
+            hasMore: rows.length >= limit,
+          } as PaginatedResult<AuditLog>;
+        },
+        () =>
+          cloudRequestOrDefault(
+            `/audit-logs${buildQuery(params as Record<string, unknown>)}`,
+            { data: [], total: 0, page: 1, limit: params?.limit ?? 50, hasMore: false } as PaginatedResult<AuditLog>,
+          ),
       ),
   },
 

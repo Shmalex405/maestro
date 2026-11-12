@@ -12,9 +12,12 @@ import {
   User as UserIcon,
 } from 'lucide-react';
 import { useAuthStore } from '@/lib/stores/auth-store';
+import { isLocalMode } from '@/lib/deployment-mode';
+import { api } from '@/lib/tauri-api';
 import { isBrowserOAuthConfigured, getCognitoConfig } from '@/lib/cognito-auth';
 import { revokeRefreshToken, openLogout } from '@/lib/oauth-pkce';
 import { ADMIN_GROUPS, useIsReadOnly } from '@/lib/read-only';
+import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
@@ -27,24 +30,23 @@ import {
 
 export function UserMenu() {
   const user = useAuthStore((s) => s.user);
-  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const isReadOnly = useIsReadOnly();
 
   const handleSignOut = async () => {
-    // Enterprise sign-out: terminate the session everywhere, not just locally,
-    // so the next person on a shared machine can't silently re-auth. Bounded so
-    // a slow network never blocks the exit; local clear + redirect always run.
-    if (isBrowserOAuthConfigured()) {
+    const local = isLocalMode();
+    // Cloud mode: terminate the Cognito session everywhere (revoke the refresh
+    // token + destroy the SSO cookie) so the next person on a shared machine
+    // can't silently re-auth. Bounded so a slow network never blocks the exit.
+    // Skipped in local mode — there is no hosted session to revoke.
+    if (!local && isBrowserOAuthConfigured()) {
       const { refreshToken } = useAuthStore.getState();
       const { domain, clientId } = getCognitoConfig();
       if (domain && clientId) {
         const tasks: Promise<unknown>[] = [];
         if (refreshToken) {
-          // Revoke server-side so a cached/stolen refresh token is dead.
           tasks.push(revokeRefreshToken({ domain, clientId, refreshToken }));
         }
-        // Destroy the browser's Cognito SSO cookie (forces a fresh prompt next time).
         tasks.push(openLogout());
         await Promise.race([
           Promise.allSettled(tasks),
@@ -52,7 +54,21 @@ export function UserMenu() {
         ]);
       }
     }
+    // Clear the cloud auth tokens on the Rust side. cloud_logout only removes
+    // the active account's token file — it does NOT touch the merged config
+    // mirror, so local-mode scope/credentials survive the sign-out.
+    try {
+      await api.config.cloud.logout();
+    } catch {
+      /* best-effort — local clear + exit below always run */
+    }
     clearAuth();
+    if (local) {
+      // No login page to bounce to in local mode — stay in the app.
+      toast.success('Signed out of your cloud account.');
+      window.location.reload();
+      return;
+    }
     try {
       sessionStorage.removeItem('startup-gate-completed');
     } catch {
@@ -61,10 +77,9 @@ export function UserMenu() {
     window.location.href = '/';
   };
 
-  // Cmd/Ctrl+Shift+Q signs the user out from anywhere — quick exit when
-  // shadowing a customer demo or stepping away from the laptop.
+  // Cmd/Ctrl+Shift+Q signs out from anywhere — quick exit when shadowing a
+  // customer demo or stepping away from the laptop.
   useEffect(() => {
-    if (!isAuthenticated) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === 'q') {
         e.preventDefault();
@@ -73,13 +88,21 @@ export function UserMenu() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!isAuthenticated || !user) return null;
-
-  const isAdmin = user.groups?.some((g) => ADMIN_GROUPS.has(g.toLowerCase()));
+  const local = isLocalMode();
+  const isAdmin = user?.groups?.some((g) => ADMIN_GROUPS.has(g.toLowerCase()));
   // De-dupe and shorten group names for the badge row
-  const visibleGroups = Array.from(new Set(user.groups ?? [])).slice(0, 3);
+  const visibleGroups = Array.from(new Set(user?.groups ?? [])).slice(0, 3);
+
+  // Local mode has no cloud identity, but we still render the profile button so
+  // the operator can reach settings and sign out of any lingering cloud
+  // association. (Previously the whole menu was hidden whenever the session was
+  // not authenticated, leaving local-mode users with no way to log out.)
+  const displayName =
+    user?.name || user?.email?.split('@')[0] || (local ? 'Local operator' : 'Account');
+  const displaySub = user?.email || (local ? 'Local mode · this machine' : undefined);
+  const hasCloudIdentity = Boolean(user);
 
   return (
     <DropdownMenu>
@@ -91,7 +114,7 @@ export function UserMenu() {
         >
           <Image
             src="/maestro-icon.png"
-            alt={user.name || user.email}
+            alt={displayName}
             width={32}
             height={32}
             className="h-full w-full object-cover"
@@ -102,13 +125,23 @@ export function UserMenu() {
         <DropdownMenuLabel className="font-normal">
           <div className="flex flex-col gap-1.5">
             <span className="text-sm font-medium text-foreground truncate">
-              {user.name || user.email.split('@')[0]}
+              {displayName}
             </span>
-            <span className="text-xs text-muted-foreground truncate">
-              {user.email}
-            </span>
-            {(user.orgId || visibleGroups.length > 0 || isReadOnly) && (
+            {displaySub && (
+              <span className="text-xs text-muted-foreground truncate">
+                {displaySub}
+              </span>
+            )}
+            {(user?.orgId || visibleGroups.length > 0 || isReadOnly || local) && (
               <div className="flex flex-wrap gap-1 pt-1">
+                {local && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] uppercase tracking-wide"
+                  >
+                    Local
+                  </Badge>
+                )}
                 {isReadOnly && (
                   <Badge
                     variant="outline"
@@ -117,7 +150,7 @@ export function UserMenu() {
                     Read-only
                   </Badge>
                 )}
-                {user.orgId && (
+                {user?.orgId && (
                   <Badge
                     variant="outline"
                     className="text-[10px] uppercase tracking-wide"
@@ -166,7 +199,7 @@ export function UserMenu() {
           </DropdownMenuItem>
         )}
         <DropdownMenuItem asChild>
-          <Link href="/config/cloud" className="cursor-pointer">
+          <Link href={local ? '/config/data-sync' : '/config/cloud'} className="cursor-pointer">
             <UserIcon className="mr-2 h-4 w-4" />
             <span>Account</span>
           </Link>
@@ -179,7 +212,7 @@ export function UserMenu() {
         >
           <span className="flex items-center">
             <LogOut className="mr-2 h-4 w-4" />
-            Sign out
+            {local && !hasCloudIdentity ? 'Sign out of cloud' : 'Sign out'}
           </span>
           <kbd className="text-[10px] text-muted-foreground/70 font-mono">
             ⌘⇧Q

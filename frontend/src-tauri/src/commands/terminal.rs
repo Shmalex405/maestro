@@ -703,7 +703,13 @@ pub async fn ensure_claude_mcp_config() -> Result<()> {
                 "env": {
                     "DOCKER_CONTAINER": "kali-pentest",
                     "CONFIG_PATH": format!("{}/config", CONTAINER_PROJECT_DIR),
-                    "SCOPE_CONFIG_PATH": format!("{}/config/scope.yml", CONTAINER_PROJECT_DIR),
+                    // Scope comes from the desktop-materialized merged file, not
+                    // the repo's placeholder scope.yml — otherwise a local-mode
+                    // assessment reads dev/example scope and rejects the user's
+                    // real targets. See docker.rs::container_env.
+                    "SCOPE_CONFIG_PATH": "/mnt/host-home/.kali-mcp-pentest/scope-merged.json",
+                    // Identity creds resolve from the merged file too (see docker.rs).
+                    "CREDENTIALS_CONFIG_PATH": "/mnt/host-home/.kali-mcp-pentest/credentials-merged.json",
                     "LOG_PATH": format!("{}/logs", CONTAINER_PROJECT_DIR),
                     "DATA_PATH": format!("{}/data", CONTAINER_PROJECT_DIR),
                 },
@@ -756,7 +762,8 @@ pub async fn ensure_codex_mcp_config(project_root: String) -> Result<()> {
          [mcp_servers.kali-pentest.env]\n\
          DOCKER_CONTAINER = \"kali-pentest\"\n\
          CONFIG_PATH = \"{root}/config\"\n\
-         SCOPE_CONFIG_PATH = \"{root}/config/scope.yml\"\n\
+         SCOPE_CONFIG_PATH = \"/mnt/host-home/.kali-mcp-pentest/scope-merged.json\"\n\
+         CREDENTIALS_CONFIG_PATH = \"/mnt/host-home/.kali-mcp-pentest/credentials-merged.json\"\n\
          LOG_PATH = \"{root}/logs\"\n\
          DATA_PATH = \"{root}/data\"\n",
         srv = CONTAINER_MCP_SERVER_DIR,

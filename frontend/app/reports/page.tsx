@@ -352,7 +352,10 @@ export default function ReportsPage() {
     for (const r of dbList) {
       items.push({
         id: `db-${r.id}`,
-        title: r.title || 'Untitled Report',
+        // Cloud reports carry `title`; local reports (Rust Report struct) carry
+        // `name`. Fall back through both before "Untitled" so local-mode reports
+        // show their real name instead of a blank title.
+        title: r.title || r.name || 'Untitled Report',
         date: r.created_at,
         format: r.format === 'pdf' ? 'pdf' : 'markdown',
         source: 'database',

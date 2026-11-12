@@ -567,9 +567,11 @@ export function StartupGate({ children }: { children: ReactNode }) {
       handleError(
         pullable
           ? `Toolkit image not found locally (${named}). Fetch it, then restart ` +
-              `Maestro:\n\n    docker pull ${expected}\n\n` +
-              `It is around 15 GB, so expect a few minutes. Docker must be ` +
-              `running. See SELF-HOSTING.md if the pull is denied.`
+              `Maestro:\n\n    docker pull --platform linux/amd64 ${expected}\n\n` +
+              `The image is amd64-only, so the --platform flag is required on ` +
+              `Apple Silicon (it runs via Rosetta) and harmless on Intel. It is ` +
+              `around 15 GB, so expect a few minutes. Docker must be running. ` +
+              `See SELF-HOSTING.md if the pull is denied.`
           : `Toolkit image not found locally (${named}). That tag names no ` +
               `registry, so it has to be built from source. From a checkout of ` +
               `the repository, run:\n\n    ./scripts/build-self-host-toolkit.sh\n\n` +

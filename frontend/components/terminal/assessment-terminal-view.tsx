@@ -322,13 +322,21 @@ export function AssessmentTerminalView({
   // animate). The raw terminal collapses behind a caret but stays mounted.
   const structuredApplicable =
     hasActiveAssessment && (sessionMode === 'live' || sessionMode === 'reattach');
-  const structuredVisible = structuredApplicable && !terminalExpanded;
 
   // Scope-filtered plan skeleton + the live SSE progress feed for the view.
-  const { data: assessmentPlan } = useAssessmentPlan({
+  const { data: assessmentPlan, isFetched: planFetched } = useAssessmentPlan({
     inScopeOnly: true,
     enabled: structuredApplicable,
   });
+  // Once the plan query has settled with no phases (the in-container MCP server
+  // couldn't resolve its orchestration config, or the run derives no in-scope
+  // phases), don't let the structured overlay sit on top of the terminal
+  // showing "Loading…" indefinitely — fall back to the raw terminal so the
+  // operator can still drive the run. If a real plan arrives later the overlay
+  // returns automatically.
+  const planUnavailable =
+    structuredApplicable && planFetched && (assessmentPlan?.phases?.length ?? 0) === 0;
+  const structuredVisible = structuredApplicable && !terminalExpanded && !planUnavailable;
   const liveFeed = useMemo(
     () =>
       structuredApplicable && effectiveAssessmentId

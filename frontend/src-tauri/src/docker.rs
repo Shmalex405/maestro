@@ -2,7 +2,7 @@ use bollard::container::{
     Config, CreateContainerOptions, ListContainersOptions, RemoveContainerOptions,
     StartContainerOptions, StopContainerOptions,
 };
-use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions};
+use bollard::image::{CreateImageOptions, ListImagesOptions, RemoveImageOptions, TagImageOptions};
 use bollard::Docker;
 
 pub use bollard::models::CreateImageInfo;
@@ -405,7 +405,18 @@ impl DockerManager {
         // container (version bump / config change). Persist it on the host so a
         // resumed assessment keeps its checkpoints and audit trail across
         // recreates. The MCP server creates the `data/` subdir itself.
-        let pentest_data = config_dir.join("pentest-data");
+        //
+        // LOCAL-STORE UNIFICATION: bind /root/.pentest at the DESKTOP's own DB
+        // dir (`~/.pentest`) — the exact location database.rs::get_db_path reads
+        // (`~/.pentest/data/pentest.db`). The engine's default DB path resolves
+        // to /root/.pentest/data/pentest.db, so with this bind it writes
+        // findings/assessments/reports straight into the SAME SQLite the desktop
+        // UI reads. One local store, so "Local" mode reflects exactly what the
+        // engine produces. (Previously `~/.kali-mcp-pentest/pentest-data`, a
+        // separate file the UI never opened — local runs never surfaced.)
+        let pentest_data = dirs::home_dir()
+            .map(|h| h.join(".pentest"))
+            .unwrap_or_else(|| config_dir.join("pentest-data"));
         std::fs::create_dir_all(&pentest_data)?;
 
         // Filesystem scope — Tier 1 (v0.1.49):
@@ -505,6 +516,20 @@ impl DockerManager {
                 project_root.display(),
                 Self::container_rel(rel)
             ));
+        }
+        // The in-container MCP server on :3001 (dist/autonomous-runner.js under
+        // /opt/pentest/mcp-server) resolves its orchestration config
+        // (team-assessment.yml, test-matrix.yml, chain-patterns.yml) by walking
+        // UP from its own install dir — which never reaches the bind-mounted
+        // repo. The toolkit image ships no /opt/pentest/config, so the walk-up
+        // finds nothing and every plan comes back with zero phases, leaving the
+        // structured "assessment plan" view perpetually blank. Surface the
+        // repo's config exactly where that walk-up lands.
+        {
+            let cfg = project_root.join("config");
+            if cfg.is_dir() {
+                binds.push(format!("{}:/opt/pentest/mcp-server/config:ro", cfg.display()));
+            }
         }
 
         let (has_any_repos, local_paths) = Self::read_repo_registry(&config_dir);
@@ -608,6 +633,22 @@ impl DockerManager {
         let mut env = vec![
             "MAESTRO_CLOUD_SESSION_PATH=/mnt/host-home/.kali-mcp-pentest/cloud-session.json".to_string(),
             "MAESTRO_CREDENTIALS_PATH=/mnt/host-home/.kali-mcp-pentest/credentials-merged.json".to_string(),
+            // Point the in-container MCP scope loader at the desktop-materialized
+            // merged scope. `loadScopeConfig()` tries cloud first, so cloud mode
+            // is unaffected — this is the fallback. In LOCAL mode it is what
+            // carries the user's real scope into the container; without it the
+            // loader falls back to the repo's placeholder `config/scope.yml`
+            // (dev/example domains), so every real target is rejected as
+            // out-of-scope → 0 in-scope tests, empty assessment plan.
+            "SCOPE_CONFIG_PATH=/mnt/host-home/.kali-mcp-pentest/scope-merged.json".to_string(),
+            // Identity credentials (sa_key_ref / credential_ref → SA-key path,
+            // tokens, service principals) live in the same merged file. The
+            // identity-credentials loader reads CREDENTIALS_CONFIG_PATH — distinct
+            // from MAESTRO_CREDENTIALS_PATH, which the app-cred loader reads — so
+            // both must point at the merged file. Without this, local-mode
+            // identity auth falls back to the placeholder config/credentials.yml
+            // and every identity target fails to authenticate.
+            "CREDENTIALS_CONFIG_PATH=/mnt/host-home/.kali-mcp-pentest/credentials-merged.json".to_string(),
             // OAST listener config for the `oast` verification oracle. The file
             // may not exist (no listener configured for this org) — the oracle
             // then reports `oast_unavailable` and blind findings stay honest
@@ -762,13 +803,43 @@ impl DockerManager {
             .as_ref()
             .and_then(|c| c.image.as_deref())
             .unwrap_or("");
-        if actual_image != kali_image() {
-            info!(
-                "Container image drift: running={} expected={}",
-                actual_image,
-                kali_image()
-            );
-            return Ok(true);
+        // Compare by resolved image ID, not tag string. Every release pins a new
+        // tag (:v{version}), but a bump that reused a cached image (identical
+        // toolkit content — see reuse_compatible_toolkit_image) retags the SAME
+        // image ID. Recreating on the tag change alone would needlessly tear down
+        // the running container and kill every live tmux assessment session
+        // inside it. Only a genuine CONTENT change (different image ID) warrants a
+        // recreate; a pure retag preserves the container and its sessions.
+        let expected_image_id = self
+            .docker
+            .inspect_image(kali_image())
+            .await
+            .ok()
+            .and_then(|i| i.id);
+        let actual_image_id = inspect.image.clone(); // running container's image ID (sha256)
+        match (actual_image_id.as_deref(), expected_image_id.as_deref()) {
+            // Same content → not drift; keep the container (and live sessions).
+            (Some(a), Some(e)) if a == e => {}
+            // Both resolved and differ → real image change → recreate.
+            (Some(_), Some(_)) => {
+                info!(
+                    "Container image drift (content changed): expected tag {} resolves to a different image ID than the running container",
+                    kali_image()
+                );
+                return Ok(true);
+            }
+            // Couldn't resolve one side (e.g. expected image not present yet) —
+            // fall back to the original tag-string comparison.
+            _ => {
+                if actual_image != kali_image() {
+                    info!(
+                        "Container image drift (tag): running={} expected={}",
+                        actual_image,
+                        kali_image()
+                    );
+                    return Ok(true);
+                }
+            }
         }
 
         // Bind mounts — compare as sets so order doesn't matter. Bollard
@@ -809,6 +880,26 @@ impl DockerManager {
         }
         if !credentials_path_present {
             info!("Container env drift — MAESTRO_CREDENTIALS_PATH missing");
+            return Ok(true);
+        }
+        // SCOPE_CONFIG_PATH (v1.14.3) points the MCP scope loader at the merged
+        // scope file. A container created before this predates local-mode scope
+        // delivery — recreate so the in-container MCP server stops reading the
+        // repo's placeholder scope.
+        let scope_path_present = envs
+            .map(|e| e.iter().any(|v| v.starts_with("SCOPE_CONFIG_PATH=")))
+            .unwrap_or(false);
+        if !scope_path_present {
+            info!("Container env drift — SCOPE_CONFIG_PATH missing");
+            return Ok(true);
+        }
+        // CREDENTIALS_CONFIG_PATH (v1.14.3) delivers identity_credentials to the
+        // in-container identity loader. Same recreate-on-missing rationale.
+        let credentials_config_present = envs
+            .map(|e| e.iter().any(|v| v.starts_with("CREDENTIALS_CONFIG_PATH=")))
+            .unwrap_or(false);
+        if !credentials_config_present {
+            info!("Container env drift — CREDENTIALS_CONFIG_PATH missing");
             return Ok(true);
         }
 
@@ -870,17 +961,29 @@ impl DockerManager {
     /// the image from GHCR if it's not present locally.
     async fn create_container(&self) -> Result<()> {
         if !self.image_exists().await? {
-            info!("Kali image not found locally — pulling from GHCR");
-            // Honest, actionable error instead of a raw registry "unauthorized"
-            // when the brokered credential is missing/expired.
-            self.pull_image().await.map_err(|e| {
-                AppError::Config(format!(
-                    "Licensed toolkit image {} couldn't be downloaded ({}). \
-                     Re-sign into Maestro Cloud (Settings → Cloud), then retry.",
-                    kali_image(),
-                    e
-                ))
-            })?;
+            // Before a multi-GB pull of the private image, try to reuse a
+            // compatible cached toolkit (a prior version's identical image) by
+            // retagging it to the pinned tag. This is what unblocks a version
+            // bump that didn't change `docker/` — especially in local mode,
+            // which has no brokered GHCR credential to pull with.
+            if self.reuse_compatible_toolkit_image().await? {
+                info!(
+                    "Reused a cached toolkit image for {} — skipping pull",
+                    kali_image()
+                );
+            } else {
+                info!("Kali image not found locally — pulling from GHCR");
+                // Honest, actionable error instead of a raw registry "unauthorized"
+                // when the brokered credential is missing/expired.
+                self.pull_image().await.map_err(|e| {
+                    AppError::Config(format!(
+                        "Licensed toolkit image {} couldn't be downloaded ({}). \
+                         Re-sign into Maestro Cloud (Settings → Cloud), then retry.",
+                        kali_image(),
+                        e
+                    ))
+                })?;
+            }
         }
 
         // NET_RAW lets nmap/hping/masscan open raw sockets for SYN scans
@@ -1007,6 +1110,94 @@ impl DockerManager {
             }) => Ok(false),
             Err(e) => Err(AppError::Docker(e)),
         }
+    }
+
+    /// When the pinned toolkit tag (`kali_image()`) isn't present locally,
+    /// look for another locally-cached image under the SAME repository (a
+    /// prior Maestro version's toolkit) that is the right platform (amd64)
+    /// and retag it to the pinned tag. Returns `Ok(true)` when one was aliased.
+    ///
+    /// Every release pins `KALI_IMAGE` to `:v{version}`, but a bump that does
+    /// not touch `docker/` produces a byte-identical toolkit. Without this, a
+    /// such a bump strands the user behind a multi-GB pull of the PRIVATE GHCR
+    /// image — for which local mode has no brokered credential. Retagging a
+    /// compatible cached image is instant and correct.
+    ///
+    /// Wrong-arch candidates are skipped on purpose: `image_exists` treats a
+    /// wrong-arch image at the pinned tag as absent, and aliasing one would
+    /// brick the recreate guard (the exact failure a manual arm64 retag caused).
+    pub async fn reuse_compatible_toolkit_image(&self) -> Result<bool> {
+        let target = kali_image();
+
+        // Already present and usable (right arch)? Nothing to reuse.
+        if let Ok(img) = self.docker.inspect_image(target).await {
+            if img.architecture.as_deref() == Some("amd64") {
+                return Ok(false);
+            }
+        }
+
+        let Some((repo_prefix, target_tag)) = target.rsplit_once(':') else {
+            return Ok(false); // no tag to alias to
+        };
+        let repo_match = format!("{}:", repo_prefix);
+
+        let mut images = match self
+            .docker
+            .list_images(Some(ListImagesOptions::<String> {
+                all: false,
+                ..Default::default()
+            }))
+            .await
+        {
+            Ok(imgs) => imgs,
+            Err(e) => {
+                warn!("Toolkit reuse skipped — list_images failed: {}", e);
+                return Ok(false);
+            }
+        };
+
+        // Prefer the most recently created candidate so we alias the newest
+        // cached toolkit, not a stale one.
+        images.sort_by(|a, b| b.created.cmp(&a.created));
+
+        for img in &images {
+            let Some(candidate) = img
+                .repo_tags
+                .iter()
+                .find(|t| t.starts_with(&repo_match) && t.as_str() != target)
+            else {
+                continue;
+            };
+
+            // ImageSummary carries no architecture — inspect to confirm the
+            // candidate is amd64 before aliasing it.
+            match self.docker.inspect_image(candidate).await {
+                Ok(info) if info.architecture.as_deref() == Some("amd64") => {
+                    self.docker
+                        .tag_image(
+                            candidate,
+                            Some(TagImageOptions {
+                                repo: repo_prefix.to_string(),
+                                tag: target_tag.to_string(),
+                            }),
+                        )
+                        .await
+                        .map_err(AppError::Docker)?;
+                    info!(
+                        "Reused cached toolkit image {} as {} — identical content, avoided a fresh pull",
+                        candidate, target
+                    );
+                    return Ok(true);
+                }
+                Ok(_) => continue, // wrong arch — keep looking
+                Err(e) => {
+                    warn!("Toolkit reuse candidate {} inspect failed: {}", candidate, e);
+                    continue;
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     /// Pure decision: should this locally-cached image be removed during
