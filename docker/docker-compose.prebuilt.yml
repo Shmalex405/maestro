@@ -1,0 +1,47 @@
+# Run the Kali toolkit from the prebuilt public image instead of building it.
+#
+# docker-compose.yml BUILDS the ~29 GB image from Dockerfile.kali (30–60 min).
+# This file PULLS the identical image, published publicly to GHCR, so a first run
+# takes a download instead of a build. Same container name, ports, mounts and
+# capabilities as the build-from-source compose — only the image source differs.
+#
+#   docker compose -f docker/docker-compose.prebuilt.yml up -d
+#
+# Override the tag to pin a specific version:
+#   KALI_IMAGE=ghcr.io/shmalex405/docker-kali:v1.14.7 \
+#     docker compose -f docker/docker-compose.prebuilt.yml up -d
+services:
+  kali:
+    image: ${KALI_IMAGE:-ghcr.io/shmalex405/docker-kali:latest}
+    pull_policy: missing
+    container_name: kali-pentest
+    hostname: kali-pentest
+    networks:
+      - pentest-net
+    ports:
+      - "3001:3001"
+    volumes:
+      - ../logs:/opt/pentest/output/logs
+      - ../data:/opt/pentest/output/data
+      - kali-msf-data:/root/.msf4
+      # Host home mounted read-only so local-repo SAST scans can reach your code
+      # at /mnt/host-home (see CLAUDE.md "Repo path mapping").
+      - ${HOME}:/mnt/host-home:ro
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    security_opt:
+      - seccomp:unconfined
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    restart: unless-stopped
+    environment:
+      - HOST_HOME=/mnt/host-home
+
+volumes:
+  kali-msf-data:
+
+networks:
+  pentest-net:
+    driver: bridge

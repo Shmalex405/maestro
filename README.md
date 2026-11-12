@@ -204,7 +204,10 @@ assessment. No account, no licence key, no backend needed — see
 ## Quick start
 
 Building from source. To install the packaged app instead, see
-[Install](#install).
+[Install](#install). To drive Maestro straight from a **Claude Code** session
+without the desktop app, see
+[QUICKSTART-CLAUDE-CODE.md](QUICKSTART-CLAUDE-CODE.md) (`git clone` →
+`./scripts/claude-code-quickstart.sh` → `claude`).
 
 ### Prerequisites
 
