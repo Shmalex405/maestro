@@ -2,6 +2,7 @@ use crate::commands::config::get_integrations_config;
 use crate::commands::findings::source_to_category;
 use crate::database::{Database, Finding, Repository};
 use crate::error::{AppError, Result};
+use crate::process_ext::NoWindow;
 use crate::mcp::McpClient;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
@@ -255,13 +256,13 @@ pub async fn scan_repository(params: ScanRepositoryParams) -> Result<ScanResult>
             // hard-reset to the remote HEAD instead, and log non-zero exits so a
             // stale scan is visible rather than silent.
             info!("Refreshing existing clone at {:?}", clone_dir);
-            let fetched = Command::new("git")
+            let fetched = Command::new("git").no_window()
                 .args(["fetch", "--depth", "1", "origin", "HEAD"])
                 .current_dir(&clone_dir)
                 .output();
             match fetched {
                 Ok(out) if out.status.success() => {
-                    let reset = Command::new("git")
+                    let reset = Command::new("git").no_window()
                         .args(["reset", "--hard", "FETCH_HEAD"])
                         .current_dir(&clone_dir)
                         .output();
@@ -312,7 +313,7 @@ pub async fn scan_repository(params: ScanRepositoryParams) -> Result<ScanResult>
                 )
             };
 
-            let output = Command::new("git")
+            let output = Command::new("git").no_window()
                 .args(["clone", "--depth", "1", &clone_url])
                 .arg(&clone_dir)
                 .output()

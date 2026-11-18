@@ -15,6 +15,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{info, warn};
 
 use crate::error::{AppError, Result};
+use crate::process_ext::NoWindow;
 
 /// Container image the desktop app expects to run. Pinned to a GHCR tag
 /// at build time so a given Maestro version always pairs with a known
@@ -1569,7 +1570,7 @@ echo "MCP server started (PID: $!)"
 pub async fn build_kali_docker_image(docker_dir: &Path, app_handle: AppHandle) -> Result<()> {
     info!("Building Kali Docker image from {:?}", docker_dir);
 
-    let mut child = tokio::process::Command::new(crate::commands::system::resolve_docker_binary())
+    let mut child = tokio::process::Command::new(crate::commands::system::resolve_docker_binary()).no_window()
         .args(["build", "-t", kali_image(), "-f", "Dockerfile.kali", "."])
         .current_dir(docker_dir)
         .stdout(std::process::Stdio::piped())

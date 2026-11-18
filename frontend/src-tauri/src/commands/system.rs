@@ -2,6 +2,7 @@ use crate::commands::credentials::{self, CredentialMode};
 use crate::database::Database;
 use crate::docker::{kali_image, CreateImageInfo, DockerManager};
 use crate::error::{AppError, Result};
+use crate::process_ext::NoWindow;
 use crate::mcp::McpClient;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
@@ -690,7 +691,7 @@ fn resolve_docker_binary_uncached() -> Option<String> {
     }
     // Last resort — let the OS resolve it via the shell. Returns "docker"
     // and hopes for the best.
-    if let Ok(output) = std::process::Command::new("docker").arg("--version").output() {
+    if let Ok(output) = std::process::Command::new("docker").no_window().arg("--version").output() {
         if output.status.success() {
             return Some("docker".to_string());
         }
@@ -704,7 +705,7 @@ pub async fn open_docker_desktop() -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("open")
+        let _ = std::process::Command::new("open").no_window()
             .arg("-a")
             .arg("Docker")
             .spawn()
@@ -713,7 +714,7 @@ pub async fn open_docker_desktop() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        let _ = std::process::Command::new("systemctl")
+        let _ = std::process::Command::new("systemctl").no_window()
             .args(["start", "docker"])
             .spawn()
             .map_err(|e| AppError::Config(format!("Failed to start Docker: {}", e)))?;
@@ -721,7 +722,7 @@ pub async fn open_docker_desktop() -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        let _ = std::process::Command::new("cmd")
+        let _ = std::process::Command::new("cmd").no_window()
             .args(["/C", "start", "", "Docker Desktop"])
             .spawn()
             .map_err(|e| AppError::Config(format!("Failed to open Docker Desktop: {}", e)))?;
@@ -846,14 +847,14 @@ pub async fn restart_docker_desktop() -> Result<()> {
     #[cfg(target_os = "macos")]
     {
         // Quit via osascript so the app gets a clean shutdown signal.
-        let _ = std::process::Command::new("osascript")
+        let _ = std::process::Command::new("osascript").no_window()
             .args(["-e", "quit app \"Docker Desktop\""])
             .output();
 
         // Poll for full exit (com.docker.backend going away).
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            let still_running = std::process::Command::new("pgrep")
+            let still_running = std::process::Command::new("pgrep").no_window()
                 .arg("-f")
                 .arg("com.docker.backend")
                 .output()
@@ -864,7 +865,7 @@ pub async fn restart_docker_desktop() -> Result<()> {
             }
             if std::time::Instant::now() > deadline {
                 // Force-kill if it didn't quit cleanly.
-                let _ = std::process::Command::new("pkill")
+                let _ = std::process::Command::new("pkill").no_window()
                     .arg("-f")
                     .arg("com.docker.backend")
                     .output();
@@ -874,7 +875,7 @@ pub async fn restart_docker_desktop() -> Result<()> {
         }
 
         // Relaunch.
-        std::process::Command::new("open")
+        std::process::Command::new("open").no_window()
             .arg("-a")
             .arg("Docker")
             .spawn()
@@ -883,7 +884,7 @@ pub async fn restart_docker_desktop() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        let _ = std::process::Command::new("systemctl")
+        let _ = std::process::Command::new("systemctl").no_window()
             .args(["restart", "docker"])
             .spawn()
             .map_err(|e| AppError::Config(format!("Failed to restart Docker: {}", e)))?;
@@ -892,10 +893,10 @@ pub async fn restart_docker_desktop() -> Result<()> {
     #[cfg(target_os = "windows")]
     {
         // Best-effort on Windows: kill the GUI process, then re-launch.
-        let _ = std::process::Command::new("taskkill")
+        let _ = std::process::Command::new("taskkill").no_window()
             .args(["/F", "/IM", "Docker Desktop.exe"])
             .output();
-        std::process::Command::new("cmd")
+        std::process::Command::new("cmd").no_window()
             .args(["/C", "start", "", "Docker Desktop"])
             .spawn()
             .map_err(|e| AppError::Config(format!("Failed to relaunch Docker Desktop: {}", e)))?;
