@@ -67,6 +67,23 @@ RUN apt-get install -y --no-install-recommends golang-go npm libicu-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# npm 12+ blocks dependency install scripts unless the package is listed in
+# `allow-scripts`. Without this, packages that set themselves up in an install
+# script are left half-installed with no error at build time:
+#   - @anthropic-ai/claude-code: `claude` is left as a stub that only prints
+#     "claude native binary not installed" (postinstall copies the binary).
+#   - better-sqlite3: no native module, so the MCP server crashes on start when
+#     the container runs `npm install --production` for it.
+#   - esbuild (pulled in by promptfoo): its binary check is skipped.
+# The global npmrc covers both the `npm install -g` lines below and the MCP
+# server's runtime install inside the container.
+RUN printf '%s\n' \
+      'allow-scripts[]=@anthropic-ai/claude-code' \
+      'allow-scripts[]=better-sqlite3' \
+      'allow-scripts[]=esbuild' \
+      >> "$(npm config get globalconfig)" \
+    && npm config get allow-scripts
+
 # Set Go path
 ENV GOPATH=/root/go
 ENV PATH=$PATH:$GOPATH/bin:/root/.local/bin
@@ -396,7 +413,12 @@ RUN echo "=== Identity tooling smoke check ===" && \
 # confirmed present in 2.1.162; do NOT pin below it, or `/assess` falls back to
 # the slower Team protocol (set `orchestrator: team` in the profile if you must
 # run an older CLI). 2.1.152 is the "stable" tag but is unverified for Workflow.
-RUN npm install -g @anthropic-ai/claude-code@2.1.162
+RUN npm install -g @anthropic-ai/claude-code@2.1.162 \
+    && claude --version
+# Keep the CLI on the pinned version above. Its auto-updater reinstalls via npm
+# at runtime, which drifts off the pin (and, before allow-scripts was set,
+# replaced the working binary with the "not installed" stub mid-session).
+ENV DISABLE_AUTOUPDATER=1
 
 # OpenAI Codex CLI — the parallel "brain" for users who pick GPT-5.5 instead
 # of Claude. Same MCP wire as Claude Code, different LLM. Auth lives in
