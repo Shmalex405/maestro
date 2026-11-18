@@ -9,6 +9,7 @@ mod database;
 mod docker;
 mod error;
 mod mcp;
+mod process_ext;
 mod state;
 
 use state::AppState;

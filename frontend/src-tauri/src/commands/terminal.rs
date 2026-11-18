@@ -5,6 +5,7 @@ use tracing::info;
 
 use crate::database::{AssessmentChatMessage, Database};
 use crate::error::Result;
+use crate::process_ext::NoWindow;
 
 use crate::commands::system::resolve_docker_binary as docker_binary;
 
@@ -67,7 +68,7 @@ pub async fn check_tmux_session(session_name: String) -> Result<bool> {
         None => return Ok(false),
     };
 
-    let output = tokio::process::Command::new(&tmux)
+    let output = tokio::process::Command::new(&tmux).no_window()
         .args(["has-session", "-t", &session_name])
         .output()
         .await
@@ -83,7 +84,7 @@ pub async fn list_tmux_sessions() -> Result<Vec<TmuxSessionInfo>> {
         None => return Ok(vec![]),
     };
 
-    let output = tokio::process::Command::new(&tmux)
+    let output = tokio::process::Command::new(&tmux).no_window()
         .args([
             "list-sessions",
             "-F",
@@ -129,7 +130,7 @@ pub async fn capture_tmux_pane(session_name: String) -> Result<String> {
         }
     };
 
-    let output = tokio::process::Command::new(&tmux)
+    let output = tokio::process::Command::new(&tmux).no_window()
         .args(["capture-pane", "-t", &session_name, "-p", "-S", "-", "-e"])
         .output()
         .await
@@ -157,7 +158,7 @@ pub async fn kill_tmux_session(session_name: String) -> Result<()> {
         }
     };
 
-    let output = tokio::process::Command::new(&tmux)
+    let output = tokio::process::Command::new(&tmux).no_window()
         .args(["kill-session", "-t", &session_name])
         .output()
         .await
@@ -573,7 +574,7 @@ pub async fn check_claude_auth_in_container() -> Result<bool> {
     // We `cat` the credential (rather than `test -f`) so we can parse it and
     // reject a present-but-broken creds file that would otherwise pass an
     // existence check and then 401 mid-session.
-    let fut = tokio::process::Command::new(docker_binary())
+    let fut = tokio::process::Command::new(docker_binary()).no_window()
         .args(["exec", "kali-pentest", "cat", "/root/.claude/.credentials.json"])
         .output();
     let output = tokio::time::timeout(std::time::Duration::from_secs(4), fut).await;
@@ -599,7 +600,7 @@ pub async fn check_claude_auth_in_container() -> Result<bool> {
 pub async fn check_codex_auth_in_container() -> Result<bool> {
     // Same timeout rationale as check_claude_auth_in_container — don't
     // let a booting container hang the UI on a spinner.
-    let fut = tokio::process::Command::new(docker_binary())
+    let fut = tokio::process::Command::new(docker_binary()).no_window()
         .args(["exec", "kali-pentest", "test", "-f", "/root/.codex/auth.json"])
         .output();
     let output = tokio::time::timeout(std::time::Duration::from_secs(4), fut).await;
@@ -644,7 +645,7 @@ pub async fn capture_codex_session_id(after_unix: i64) -> Result<Option<String>>
         "#,
         after_unix
     );
-    let output = tokio::process::Command::new(docker_binary())
+    let output = tokio::process::Command::new(docker_binary()).no_window()
         .args(["exec", "kali-pentest", "sh", "-c", &script])
         .output()
         .await;
@@ -793,7 +794,7 @@ pub async fn check_assessment_session_live(assessment_id: String) -> Result<bool
     }
     for prefix in &["assess-", "codex-assess-"] {
         let session_name = format!("{}{}", prefix, assessment_id);
-        let output = tokio::process::Command::new(docker_binary())
+        let output = tokio::process::Command::new(docker_binary()).no_window()
             .args(["exec", "kali-pentest", "tmux", "has-session", "-t", &session_name])
             .output()
             .await;
@@ -829,7 +830,7 @@ pub async fn check_claude_session_resumable(session_id: String) -> Result<bool> 
         "ls /root/.claude/projects/*/{}.jsonl >/dev/null 2>&1",
         session_id
     );
-    let output = tokio::process::Command::new(docker_binary())
+    let output = tokio::process::Command::new(docker_binary()).no_window()
         .args(["exec", "kali-pentest", "sh", "-c", &script])
         .output()
         .await;
@@ -849,7 +850,7 @@ pub async fn kill_assessment_sessions(assessment_id: String) -> Result<()> {
     }
     for prefix in &["assess-", "codex-assess-"] {
         let session_name = format!("{}{}", prefix, assessment_id);
-        let _ = tokio::process::Command::new(docker_binary())
+        let _ = tokio::process::Command::new(docker_binary()).no_window()
             .args(["exec", "kali-pentest", "tmux", "kill-session", "-t", &session_name])
             .output()
             .await;
@@ -865,7 +866,7 @@ pub async fn kill_assessment_sessions(assessment_id: String) -> Result<()> {
 /// brains appears once.
 #[tauri::command]
 pub async fn list_live_assessment_sessions() -> Result<Vec<String>> {
-    let output = tokio::process::Command::new(docker_binary())
+    let output = tokio::process::Command::new(docker_binary()).no_window()
         .args(["exec", "kali-pentest", "tmux", "ls", "-F", "#{session_name}"])
         .output()
         .await;
