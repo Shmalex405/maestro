@@ -565,7 +565,7 @@ export function StartupGate({ children }: { children: ReactNode }) {
       const named = expected || 'your configured KALI_IMAGE tag';
 
       handleError(
-        pullable
+        (pullable
           ? `Toolkit image not found locally (${named}). Fetch it, then restart ` +
               `Maestro:\n\n    docker pull --platform linux/amd64 ${expected}\n\n` +
               `The image is amd64-only, so the --platform flag is required on ` +
@@ -577,7 +577,10 @@ export function StartupGate({ children }: { children: ReactNode }) {
               `the repository, run:\n\n    ./scripts/build-self-host-toolkit.sh\n\n` +
               `then restart Maestro. Expect 30-60 minutes and ~15 GB. If you ` +
               `installed Maestro from a packaged download rather than source, ` +
-              `this build is not the intended path — see SELF-HOSTING.md.`,
+              `this build is not the intended path — see SELF-HOSTING.md.`) +
+          `\n\nTo use a toolkit image you already have under another tag, put ` +
+          `its name on the first line of ~/.kali-mcp-pentest/kali-image (or set ` +
+          `MAESTRO_KALI_IMAGE) and restart Maestro.`,
         s + 2,
       );
       return;

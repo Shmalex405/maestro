@@ -201,6 +201,7 @@ fn find_aws_binary() -> String {
 /// is. Static creds in the desktop process env are stripped so the
 /// profile's own credentials are used.
 async fn exec_on_host(cmd: Vec<String>, env: Vec<String>) -> Result<ExecOutput> {
+    use crate::process_ext::NoWindow;
     use tokio::process::Command;
     if cmd.is_empty() {
         return Err(AppError::Other("empty host command".into()));
@@ -211,6 +212,7 @@ async fn exec_on_host(cmd: Vec<String>, env: Vec<String>) -> Result<ExecOutput> 
         cmd[0].clone()
     };
     let mut c = Command::new(&program);
+    c.no_window();
     c.args(&cmd[1..]);
     c.env_remove("AWS_ACCESS_KEY_ID");
     c.env_remove("AWS_SECRET_ACCESS_KEY");

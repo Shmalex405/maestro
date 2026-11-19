@@ -7,6 +7,7 @@ pub mod cloud_validation;
 pub mod codex_credentials;
 pub mod config;
 pub mod credentials;
+pub mod engine_sync;
 pub mod findings;
 pub mod help;
 pub mod imports;

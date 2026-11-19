@@ -68,10 +68,19 @@ echo "Building $TAG for $PLATFORM from docker/Dockerfile.kali..."
 echo "Build context: docker/"
 echo
 
+# The MCP server's package files go in as a separate, minimal build context
+# (`mcp-deps`, see the top of the Dockerfile) so the image ships its production
+# dependencies pre-installed. Only these two files are sent — not node_modules
+# or dist/ — via a temporary directory.
+MCP_DEPS_DIR="$(mktemp -d)"
+trap 'rm -rf "$MCP_DEPS_DIR"' EXIT
+cp mcp-server/package.json mcp-server/package-lock.json "$MCP_DEPS_DIR/"
+
 # `docker/` is the build context — the Dockerfile COPYs scripts/ from there.
 docker build \
   --platform "$PLATFORM" \
   -f docker/Dockerfile.kali \
+  --build-context mcp-deps="$MCP_DEPS_DIR" \
   -t "$TAG" \
   docker
 

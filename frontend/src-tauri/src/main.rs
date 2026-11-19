@@ -9,6 +9,7 @@ mod database;
 mod docker;
 mod error;
 mod mcp;
+mod process_ext;
 mod state;
 
 use state::AppState;
@@ -152,6 +153,8 @@ fn main() {
             commands::reports::read_report_file,
             commands::reports::generate_pdf_report,
             commands::reports::download_url_to_downloads,
+            commands::reports::read_local_report_pdf,
+            commands::reports::save_local_report_pdf,
             // Config
             commands::config::get_scope_config,
             commands::config::save_scope_config,

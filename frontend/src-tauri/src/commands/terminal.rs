@@ -5,6 +5,7 @@ use tracing::info;
 
 use crate::database::{AssessmentChatMessage, Database};
 use crate::error::Result;
+use crate::process_ext::NoWindow;
 
 use crate::commands::system::resolve_docker_binary as docker_binary;
 
@@ -67,7 +68,7 @@ pub async fn check_tmux_session(session_name: String) -> Result<bool> {
         None => return Ok(false),
     };
 
-    let output = tokio::process::Command::new(&tmux)
+    let output = tokio::process::Command::new(&tmux).no_window()
         .args(["has-session", "-t", &session_name])
         .output()
         .await
@@ -83,7 +84,7 @@ pub async fn list_tmux_sessions() -> Result<Vec<TmuxSessionInfo>> {
         None => return Ok(vec![]),
     };
 
-    let output = tokio::process::Command::new(&tmux)
+    let output = tokio::process::Command::new(&tmux).no_window()
         .args([
             "list-sessions",
             "-F",
@@ -129,7 +130,7 @@ pub async fn capture_tmux_pane(session_name: String) -> Result<String> {
         }
     };
 
-    let output = tokio::process::Command::new(&tmux)
+    let output = tokio::process::Command::new(&tmux).no_window()
         .args(["capture-pane", "-t", &session_name, "-p", "-S", "-", "-e"])
         .output()
         .await
@@ -157,7 +158,7 @@ pub async fn kill_tmux_session(session_name: String) -> Result<()> {
         }
     };
 
-    let output = tokio::process::Command::new(&tmux)
+    let output = tokio::process::Command::new(&tmux).no_window()
         .args(["kill-session", "-t", &session_name])
         .output()
         .await
@@ -296,7 +297,16 @@ fn host_path_to_container(host: &str) -> String {
     if let Some(home) = dirs::home_dir() {
         let home_str = home.to_string_lossy().to_string();
         if !home_str.is_empty() && host.starts_with(&home_str) {
-            return format!("/mnt/host-home{}", &host[home_str.len()..]);
+            // Windows host paths use backslashes; the container is Linux.
+            // Without this, `C:\Users\me\Documents\proj` became
+            // `/mnt/host-home\Documents\proj`, the `cd` before launching
+            // claude failed, and claude started in /opt/pentest without the
+            // project's CLAUDE.md, agents or slash commands — and the
+            // `cd ... && restore /root/.claude.json` step was skipped too.
+            return format!(
+                "/mnt/host-home{}",
+                host[home_str.len()..].replace('\\', "/")
+            );
         }
     }
     host.to_string()
@@ -436,7 +446,7 @@ pub async fn get_terminal_session(id: String) -> Result<Option<TerminalSession>>
     db.get_terminal_session(&id)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn end_terminal_session(
     id: String,
     exit_code: Option<i32>,
@@ -447,7 +457,7 @@ pub async fn end_terminal_session(
     db.end_terminal_session(&id, exit_code)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn link_session_to_assessment(
     session_id: String,
     assessment_id: String,
@@ -573,7 +583,7 @@ pub async fn check_claude_auth_in_container() -> Result<bool> {
     // We `cat` the credential (rather than `test -f`) so we can parse it and
     // reject a present-but-broken creds file that would otherwise pass an
     // existence check and then 401 mid-session.
-    let fut = tokio::process::Command::new(docker_binary())
+    let fut = tokio::process::Command::new(docker_binary()).no_window()
         .args(["exec", "kali-pentest", "cat", "/root/.claude/.credentials.json"])
         .output();
     let output = tokio::time::timeout(std::time::Duration::from_secs(4), fut).await;
@@ -599,7 +609,7 @@ pub async fn check_claude_auth_in_container() -> Result<bool> {
 pub async fn check_codex_auth_in_container() -> Result<bool> {
     // Same timeout rationale as check_claude_auth_in_container — don't
     // let a booting container hang the UI on a spinner.
-    let fut = tokio::process::Command::new(docker_binary())
+    let fut = tokio::process::Command::new(docker_binary()).no_window()
         .args(["exec", "kali-pentest", "test", "-f", "/root/.codex/auth.json"])
         .output();
     let output = tokio::time::timeout(std::time::Duration::from_secs(4), fut).await;
@@ -644,7 +654,7 @@ pub async fn capture_codex_session_id(after_unix: i64) -> Result<Option<String>>
         "#,
         after_unix
     );
-    let output = tokio::process::Command::new(docker_binary())
+    let output = tokio::process::Command::new(docker_binary()).no_window()
         .args(["exec", "kali-pentest", "sh", "-c", &script])
         .output()
         .await;
@@ -668,9 +678,14 @@ pub async fn capture_codex_session_id(after_unix: i64) -> Result<Option<String>>
 /// the native modules (better-sqlite3 etc.) are arm64 ELF and won't load
 /// in an amd64 process. The baked copy has the right-arch native modules.
 const CONTAINER_MCP_SERVER_DIR: &str = "/opt/pentest/mcp-server";
-/// Container paths the in-container MCP server uses for the rest of the
-/// project tree. The codex/claude configs we write below point at these.
-const CONTAINER_PROJECT_DIR: &str = "/mnt/host-home/Desktop/kali-mcp-pentest";
+/// Container path of the project tree (config/, logs/, data/) the
+/// in-container MCP server uses. Derived from the real project root — it
+/// used to be hard-coded to `/mnt/host-home/Desktop/kali-mcp-pentest`, a
+/// developer's checkout location that doesn't exist on other machines, so
+/// CONFIG_PATH/LOG_PATH/DATA_PATH in the generated MCP config pointed nowhere.
+fn container_project_dir() -> String {
+    host_path_to_container(&get_project_root())
+}
 
 /// Ensures the Claude CLI inside the container has an MCP config registering
 /// the kali-pentest MCP server using the container's amd64 `mcp-server/`
@@ -692,6 +707,7 @@ pub async fn ensure_claude_mcp_config() -> Result<()> {
     })?;
     let claude_home = home_dir.join(".kali-mcp-pentest").join("claude-home");
     std::fs::create_dir_all(&claude_home)?;
+    let project_dir = container_project_dir();
 
     let body = serde_json::json!({
         "_comment": "Generated by Maestro — do not edit by hand. Used only when claude runs inside the kali-pentest container; the project's .mcp.json points at host paths for host-run claude.",
@@ -702,7 +718,7 @@ pub async fn ensure_claude_mcp_config() -> Result<()> {
                 "cwd": CONTAINER_MCP_SERVER_DIR,
                 "env": {
                     "DOCKER_CONTAINER": "kali-pentest",
-                    "CONFIG_PATH": format!("{}/config", CONTAINER_PROJECT_DIR),
+                    "CONFIG_PATH": format!("{project_dir}/config"),
                     // Scope comes from the desktop-materialized merged file, not
                     // the repo's placeholder scope.yml — otherwise a local-mode
                     // assessment reads dev/example scope and rejects the user's
@@ -710,8 +726,8 @@ pub async fn ensure_claude_mcp_config() -> Result<()> {
                     "SCOPE_CONFIG_PATH": "/mnt/host-home/.kali-mcp-pentest/scope-merged.json",
                     // Identity creds resolve from the merged file too (see docker.rs).
                     "CREDENTIALS_CONFIG_PATH": "/mnt/host-home/.kali-mcp-pentest/credentials-merged.json",
-                    "LOG_PATH": format!("{}/logs", CONTAINER_PROJECT_DIR),
-                    "DATA_PATH": format!("{}/data", CONTAINER_PROJECT_DIR),
+                    "LOG_PATH": format!("{project_dir}/logs"),
+                    "DATA_PATH": format!("{project_dir}/data"),
                 },
             }
         }
@@ -793,7 +809,7 @@ pub async fn check_assessment_session_live(assessment_id: String) -> Result<bool
     }
     for prefix in &["assess-", "codex-assess-"] {
         let session_name = format!("{}{}", prefix, assessment_id);
-        let output = tokio::process::Command::new(docker_binary())
+        let output = tokio::process::Command::new(docker_binary()).no_window()
             .args(["exec", "kali-pentest", "tmux", "has-session", "-t", &session_name])
             .output()
             .await;
@@ -829,7 +845,7 @@ pub async fn check_claude_session_resumable(session_id: String) -> Result<bool> 
         "ls /root/.claude/projects/*/{}.jsonl >/dev/null 2>&1",
         session_id
     );
-    let output = tokio::process::Command::new(docker_binary())
+    let output = tokio::process::Command::new(docker_binary()).no_window()
         .args(["exec", "kali-pentest", "sh", "-c", &script])
         .output()
         .await;
@@ -849,7 +865,7 @@ pub async fn kill_assessment_sessions(assessment_id: String) -> Result<()> {
     }
     for prefix in &["assess-", "codex-assess-"] {
         let session_name = format!("{}{}", prefix, assessment_id);
-        let _ = tokio::process::Command::new(docker_binary())
+        let _ = tokio::process::Command::new(docker_binary()).no_window()
             .args(["exec", "kali-pentest", "tmux", "kill-session", "-t", &session_name])
             .output()
             .await;
@@ -865,7 +881,7 @@ pub async fn kill_assessment_sessions(assessment_id: String) -> Result<()> {
 /// brains appears once.
 #[tauri::command]
 pub async fn list_live_assessment_sessions() -> Result<Vec<String>> {
-    let output = tokio::process::Command::new(docker_binary())
+    let output = tokio::process::Command::new(docker_binary()).no_window()
         .args(["exec", "kali-pentest", "tmux", "ls", "-F", "#{session_name}"])
         .output()
         .await;
@@ -901,7 +917,7 @@ pub async fn get_terminal_working_dir() -> Result<String> {
     Ok(get_project_root())
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn save_terminal_transcript(
     session_id: String,
     transcript: String,
@@ -912,7 +928,7 @@ pub async fn save_terminal_transcript(
     db.save_terminal_transcript(&session_id, &transcript)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn get_terminal_sessions_for_assessment(
     assessment_id: String,
 ) -> Result<Vec<TerminalSession>> {
@@ -920,7 +936,7 @@ pub async fn get_terminal_sessions_for_assessment(
     db.get_terminal_sessions_for_assessment(&assessment_id)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn save_assessment_chat_messages(
     assessment_id: String,
     messages: Vec<AssessmentChatMessage>,
@@ -929,7 +945,7 @@ pub async fn save_assessment_chat_messages(
     db.save_assessment_chat_messages(&assessment_id, &messages)
 }
 
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn load_assessment_chat_messages(
     assessment_id: String,
 ) -> Result<Vec<AssessmentChatMessage>> {

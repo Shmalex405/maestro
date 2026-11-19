@@ -15,6 +15,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tracing::{info, warn};
 
 use crate::error::{AppError, Result};
+use crate::process_ext::NoWindow;
 
 /// Container image the desktop app expects to run. Pinned to a GHCR tag
 /// at build time so a given Maestro version always pairs with a known
@@ -37,11 +38,79 @@ use crate::error::{AppError, Result};
 /// The startup gate checks for the image locally before attempting any
 /// registry pull, so a local-only tag is used as-is and never fetched. See
 /// SELF-HOSTING.md.
+///
+/// The build-time tag can be overridden at runtime, so an installed app can
+/// run a locally built or differently tagged toolkit without being rebuilt
+/// (and without re-tagging the image after every update). First match wins:
+///   1. `MAESTRO_KALI_IMAGE` environment variable
+///   2. `~/.kali-mcp-pentest/kali-image` — first non-empty, non-# line
+///   3. the build-time `KALI_IMAGE`, else `ghcr.io/shmalex405/docker-kali:latest`
+/// Resolved once per run; a malformed override is logged and ignored.
 pub fn kali_image() -> &'static str {
-    option_env!("KALI_IMAGE").unwrap_or("ghcr.io/shmalex405/docker-kali:latest")
+    static IMAGE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    IMAGE.get_or_init(|| {
+        let built_in = option_env!("KALI_IMAGE")
+            .unwrap_or("ghcr.io/shmalex405/docker-kali:latest")
+            .to_string();
+        let from_env = std::env::var("MAESTRO_KALI_IMAGE").ok();
+        let from_file = dirs::home_dir().and_then(|h| {
+            std::fs::read_to_string(h.join(".kali-mcp-pentest").join("kali-image")).ok()
+        });
+        match resolve_kali_image(from_env.as_deref(), from_file.as_deref(), &built_in) {
+            (image, Some(source)) => {
+                info!("Using toolkit image {image} (from {source})");
+                image
+            }
+            (image, None) => image,
+        }
+    })
+}
+
+/// Pick the toolkit image from the runtime overrides, falling back to the
+/// build-time default. Returns the image and, when overridden, its source.
+fn resolve_kali_image(
+    from_env: Option<&str>,
+    from_file: Option<&str>,
+    built_in: &str,
+) -> (String, Option<&'static str>) {
+    if let Some(v) = from_env.map(str::trim).filter(|v| !v.is_empty()) {
+        if is_valid_image_ref(v) {
+            return (v.to_string(), Some("MAESTRO_KALI_IMAGE"));
+        }
+        warn!("Ignoring MAESTRO_KALI_IMAGE={v:?}: not a valid image reference");
+    }
+    if let Some(text) = from_file {
+        let line = text
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty() && !l.starts_with('#'));
+        if let Some(v) = line {
+            if is_valid_image_ref(v) {
+                return (v.to_string(), Some("~/.kali-mcp-pentest/kali-image"));
+            }
+            warn!("Ignoring ~/.kali-mcp-pentest/kali-image ({v:?}): not a valid image reference");
+        }
+    }
+    (built_in.to_string(), None)
+}
+
+/// A plausible Docker image reference: `name[:tag][@digest]`, no spaces or
+/// shell metacharacters (the value ends up in docker commands and logs).
+fn is_valid_image_ref(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 255
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-/:@".contains(c))
+        && !s.starts_with(['-', '/', ':', '.'])
 }
 
 const CONTAINER_NAME: &str = "kali-pentest";
+
+/// Docker named volume holding the engine's own SQLite DB (mounted at
+/// /root/.pentest). Never a host bind — see the comment where it is mounted.
+const ENGINE_DATA_VOLUME: &str = "maestro-engine-data";
+
+/// Keeps Claude Code's `.claude.json` inside the persistent /root/.claude bind.
+const CLAUDE_CONFIG_DIR_ENV: &str = "CLAUDE_CONFIG_DIR=/root/.claude";
 
 /// Ceiling for a single *quick* Docker daemon API call (inspect/list/create/
 /// start/stop/remove) before we treat the daemon as hung. See
@@ -400,24 +469,24 @@ impl DockerManager {
         std::fs::create_dir_all(&codex_home)?;
         // MCP server SQLite DB (assessment_checkpoints, findings, audit logs)
         // lives at /root/.pentest/data/pentest.db inside the container. Without
-        // a bind it sits in the container writable layer — it survives a
-        // stop→start but is destroyed whenever the drift detector recreates the
-        // container (version bump / config change). Persist it on the host so a
-        // resumed assessment keeps its checkpoints and audit trail across
-        // recreates. The MCP server creates the `data/` subdir itself.
+        // persistence it sits in the container writable layer and is destroyed
+        // whenever the drift detector recreates the container.
         //
-        // LOCAL-STORE UNIFICATION: bind /root/.pentest at the DESKTOP's own DB
-        // dir (`~/.pentest`) — the exact location database.rs::get_db_path reads
-        // (`~/.pentest/data/pentest.db`). The engine's default DB path resolves
-        // to /root/.pentest/data/pentest.db, so with this bind it writes
-        // findings/assessments/reports straight into the SAME SQLite the desktop
-        // UI reads. One local store, so "Local" mode reflects exactly what the
-        // engine produces. (Previously `~/.kali-mcp-pentest/pentest-data`, a
-        // separate file the UI never opened — local runs never surfaced.)
-        let pentest_data = dirs::home_dir()
-            .map(|h| h.join(".pentest"))
-            .unwrap_or_else(|| config_dir.join("pentest-data"));
-        std::fs::create_dir_all(&pentest_data)?;
+        // ONE WRITER PER DATABASE. This used to bind /root/.pentest at the
+        // desktop's own DB dir (`~/.pentest`) so engine and desktop shared a
+        // single SQLite file. That is unsafe across the host/VM boundary: on
+        // Windows (and macOS) Docker Desktop shares host files into the Linux
+        // VM over 9p/virtiofs, where SQLite's WAL shared memory cannot be
+        // mapped (the engine died with SQLITE_CANTOPEN whenever the desktop
+        // held the file) and rollback-journal locks are not visible across the
+        // boundary (concurrent writers can corrupt the file).
+        //
+        // So the engine now owns its own DB on a Docker named volume — Linux
+        // storage inside the VM, where WAL and locking work normally and every
+        // process in the container shares it safely — and it survives
+        // container recreates. The desktop is the only writer of
+        // `~/.pentest/data/pentest.db` and copies engine results in over the
+        // engine's HTTP API (see commands/engine_sync.rs).
 
         // Filesystem scope — Tier 1 (v0.1.49):
         // Block writes from inside the container to anything outside a
@@ -447,8 +516,22 @@ impl DockerManager {
             format!("{}:/app/config", config_dir.display()),
             format!("{}:/root/.claude", claude_home.display()),
             format!("{}:/root/.codex", codex_home.display()),
-            format!("{}:/root/.pentest", pentest_data.display()),
+            format!("{}:/root/.pentest", ENGINE_DATA_VOLUME),
             format!("{}:/mnt/host-home/.kali-mcp-pentest", config_dir.display()),
+            // ...except the MCP server the container runs, which the desktop
+            // syncs from the app bundle. It must not be writable from inside:
+            // an in-container agent once patched it there, and the edit ran on
+            // every later start. The container only ever copies *from* it
+            // (into /opt/pentest/mcp-server), so mount it read-only over both
+            // writable views of the config dir.
+            format!(
+                "{}:/app/config/mcp-server:ro",
+                config_dir.join("mcp-server").display()
+            ),
+            format!(
+                "{}:/mnt/host-home/.kali-mcp-pentest/mcp-server:ro",
+                config_dir.join("mcp-server").display()
+            ),
         ];
 
         // -- Per-engagement workspace carve-outs (v0.1.52) --
@@ -654,6 +737,14 @@ impl DockerManager {
             // then reports `oast_unavailable` and blind findings stay honest
             // unverified candidates rather than being silently dropped.
             "MAESTRO_OAST_CONFIG_PATH=/mnt/host-home/.kali-mcp-pentest/oast.json".to_string(),
+            // Claude Code keeps its UI/onboarding state in `.claude.json`, by
+            // default at /root/.claude.json — outside the persistent
+            // /root/.claude bind, so it was wiped on every container recreate
+            // and Claude reran first-time setup (theme picker, sign-in screen).
+            // With CLAUDE_CONFIG_DIR it lives at /root/.claude/.claude.json,
+            // inside the bind. Credentials and settings already live there,
+            // so nothing else moves.
+            CLAUDE_CONFIG_DIR_ENV.to_string(),
         ];
         if tier3 {
             env.push("MAESTRO_TIER3_EGRESS=1".to_string());
@@ -842,16 +933,23 @@ impl DockerManager {
             }
         }
 
-        // Bind mounts — compare as sets so order doesn't matter. Bollard
-        // normalizes paths (drops trailing slashes, rewrites `:ro` etc.),
-        // so compare on the raw strings after the same normalization.
-        let expected: HashSet<String> = Self::expected_binds()?.into_iter().collect();
+        // Bind mounts — compare as sets so order doesn't matter, after
+        // normalizing host paths: Docker Desktop on Windows reports some
+        // sources in its VM form (`/run/desktop/mnt/host/c/Users/...`) and
+        // others as given (`C:\Users\...`). Compared raw, the same folder
+        // never matched, so every start saw "drift" and recreated the
+        // container, killing its live sessions.
+        let expected: HashSet<String> = Self::expected_binds()?
+            .iter()
+            .map(|b| Self::normalize_bind(b))
+            .collect();
         let actual: HashSet<String> = inspect
             .host_config
             .as_ref()
             .and_then(|h| h.binds.clone())
             .unwrap_or_default()
-            .into_iter()
+            .iter()
+            .map(|b| Self::normalize_bind(b))
             .collect();
         if expected != actual {
             info!(
@@ -893,6 +991,13 @@ impl DockerManager {
             info!("Container env drift — SCOPE_CONFIG_PATH missing");
             return Ok(true);
         }
+        let claude_config_dir_present = envs
+            .map(|e| e.iter().any(|v| v == CLAUDE_CONFIG_DIR_ENV))
+            .unwrap_or(false);
+        if !claude_config_dir_present {
+            info!("Container env drift — CLAUDE_CONFIG_DIR missing");
+            return Ok(true);
+        }
         // CREDENTIALS_CONFIG_PATH (v1.14.3) delivers identity_credentials to the
         // in-container identity loader. Same recreate-on-missing rationale.
         let credentials_config_present = envs
@@ -928,13 +1033,20 @@ impl DockerManager {
         // containers don't have the v0.1.32+ tooling (codex, etc.) that
         // only ships in the amd64 image. Force a recreate so the new
         // container is created via Rosetta2 from the amd64 image.
-        let actual_platform = inspect.platform.as_deref().unwrap_or("");
-        if !actual_platform.is_empty() && actual_platform != "linux/amd64" {
-            info!(
-                "Container platform drift — running={}, expected=linux/amd64",
-                actual_platform,
-            );
-            return Ok(true);
+        //
+        // Check the architecture of the image the container runs. The
+        // container's own `Platform` field is just the OS ("linux"), so the
+        // previous comparison against "linux/amd64" never matched and every
+        // check reported drift — recreating a perfectly good container and
+        // killing its live sessions.
+        if let Some(image_id) = inspect.image.as_deref() {
+            if let Ok(image) = self.docker.inspect_image(image_id).await {
+                let arch = image.architecture.as_deref().unwrap_or("");
+                if Self::is_wrong_arch(arch) {
+                    info!("Container platform drift — image architecture={arch}, expected=amd64");
+                    return Ok(true);
+                }
+            }
         }
 
         Ok(false)
@@ -1216,7 +1328,51 @@ impl DockerManager {
         if image_id == current_id {
             return false;
         }
-        repo_tags.iter().any(|t| t.starts_with(repo_match))
+        // Every tag must be under the Kali repo. An image that also carries
+        // a tag elsewhere (e.g. a user's `my-kali:backup`) was deliberately
+        // kept by someone — removing it would delete that tag too.
+        !repo_tags.is_empty() && repo_tags.iter().all(|t| t.starts_with(repo_match))
+    }
+
+    /// True when the image repository names a registry/namespace path
+    /// (`ghcr.io/org/docker-kali`) rather than a bare local name
+    /// (`maestro-toolkit`). Only registry images are Maestro's to clean up:
+    /// a bare name is a locally built image, and its other tags (`:previous`,
+    /// `:backup`) are the user's own versions, not leftover upgrades.
+    fn is_registry_repo(repo_prefix: &str) -> bool {
+        repo_prefix.contains('/')
+    }
+
+    /// The Kali image is amd64-only; an image reporting another known
+    /// architecture means an old arm64 container that must be recreated.
+    /// An unknown/empty architecture is not treated as drift.
+    fn is_wrong_arch(arch: &str) -> bool {
+        !arch.is_empty() && arch != "amd64"
+    }
+
+    /// Normalize a bind string (`source:dest[:opts]`) so a Windows host path
+    /// and Docker Desktop's VM form of the same path compare equal:
+    /// `C:\Users\me\x:/dest:ro` and `/run/desktop/mnt/host/c/Users/me/x:/dest:ro`
+    /// both become `/run/desktop/mnt/host/c/Users/me/x:/dest:ro`. Named
+    /// volumes and POSIX paths are returned unchanged.
+    fn normalize_bind(bind: &str) -> String {
+        let bytes = bind.as_bytes();
+        let is_windows_source = bytes.len() > 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && (bytes[2] == b'\\' || bytes[2] == b'/');
+        if !is_windows_source {
+            return bind.to_string();
+        }
+        // The container destination always starts with '/', so the source
+        // ends at the first ":/" after the drive letter's colon.
+        let Some(split) = bind[2..].find(":/").map(|i| i + 2) else {
+            return bind.to_string();
+        };
+        let (source, rest) = bind.split_at(split);
+        let drive = source[..1].to_ascii_lowercase();
+        let path = source[3..].replace('\\', "/");
+        format!("/run/desktop/mnt/host/{drive}/{path}{rest}")
     }
 
     /// Remove old Kali image versions left over from previous Maestro
@@ -1256,6 +1412,13 @@ impl DockerManager {
             .rsplit_once(':')
             .map(|(repo, _)| repo)
             .unwrap_or(image_ref);
+        if !Self::is_registry_repo(repo_prefix) {
+            info!(
+                "Skipping old-image cleanup — {} is a locally built image; its other tags are the user's",
+                image_ref
+            );
+            return Ok(());
+        }
         let repo_match = format!("{}:", repo_prefix);
 
         let images = match self
@@ -1419,14 +1582,44 @@ impl DockerManager {
 
         let script = format!(
             r#"
-# Skip if MCP server is already running
-if curl -sf http://127.0.0.1:3001/health > /dev/null 2>&1; then
-    echo "MCP server already running"
-    exit 0
-fi
-
 SOURCE="{source}"
 MCP_DIR="/opt/pentest/mcp-server"
+
+# One start at a time: the container start and the "ensure running" check
+# can both run this script concurrently, and two copies redeploying dist/ at
+# once collide and launch two servers. A later run waits here, then finds
+# the first run's server below and exits.
+exec 9> /tmp/mcp-server-start.lock
+flock -w 120 9 || true
+
+# A server launched moments ago may not be listening yet (the start and the
+# follow-up "ensure running" check can arrive seconds apart). Give it time
+# rather than redeploying underneath it and starting a second one.
+if ! curl -sf http://127.0.0.1:3001/health > /dev/null 2>&1 && \
+   pgrep -f "^node dist/autonomous-runner.js" > /dev/null 2>&1; then
+    for i in $(seq 1 20); do
+        curl -sf http://127.0.0.1:3001/health > /dev/null 2>&1 && break
+        sleep 1
+    done
+fi
+
+# Skip only if the server is running AND its deployed code matches the
+# synced copy. If the desktop has synced new code (an app update or rebuild),
+# stop the old server so the new code is deployed below — otherwise a
+# container that outlives the update keeps serving the old engine until it
+# happens to be recreated.
+if curl -sf http://127.0.0.1:3001/health > /dev/null 2>&1; then
+    if diff -rq "$SOURCE/dist" "$MCP_DIR/dist" > /dev/null 2>&1; then
+        echo "MCP server already running"
+        exit 0
+    fi
+    echo "MCP server code changed; restarting"
+    pkill -f "^node dist/autonomous-runner.js" || true
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        curl -sf http://127.0.0.1:3001/health > /dev/null 2>&1 || break
+        sleep 1
+    done
+fi
 
 # Verify source dist/ exists
 if [ ! -f "$SOURCE/dist/autonomous-runner.js" ]; then
@@ -1437,6 +1630,8 @@ fi
 # Setup container-local workspace
 mkdir -p "$MCP_DIR"
 cp "$SOURCE/package.json" "$MCP_DIR/"
+# Replace dist/ wholesale so files removed from the bundle don't linger.
+rm -rf "$MCP_DIR/dist"
 cp -r "$SOURCE/dist" "$MCP_DIR/"
 
 # Install production deps if needed (rebuilds native modules for Linux)
@@ -1449,7 +1644,10 @@ fi
 
 # Start the autonomous HTTP server in the background
 cd "$MCP_DIR"
-nohup node dist/autonomous-runner.js > /tmp/mcp-server.log 2>&1 &
+# `9>&-`: don't let the long-running server inherit the start lock's file
+# descriptor, or it would hold the lock for its whole life and every later
+# start would wait out the flock timeout.
+nohup node dist/autonomous-runner.js 9>&- > /tmp/mcp-server.log 2>&1 &
 echo "MCP server started (PID: $!)"
 "#,
             source = host_mcp_path,
@@ -1569,7 +1767,7 @@ echo "MCP server started (PID: $!)"
 pub async fn build_kali_docker_image(docker_dir: &Path, app_handle: AppHandle) -> Result<()> {
     info!("Building Kali Docker image from {:?}", docker_dir);
 
-    let mut child = tokio::process::Command::new(crate::commands::system::resolve_docker_binary())
+    let mut child = tokio::process::Command::new(crate::commands::system::resolve_docker_binary()).no_window()
         .args(["build", "-t", kali_image(), "-f", "Dockerfile.kali", "."])
         .current_dir(docker_dir)
         .stdout(std::process::Stdio::piped())
@@ -1803,6 +2001,76 @@ mod tests {
             KALI_REPO_MATCH,
         );
         assert!(removable);
+    }
+
+    #[test]
+    fn prune_keeps_image_with_a_tag_outside_the_repo() {
+        // The user tagged this one themselves — keep it (and their tag).
+        let removable = DockerManager::should_prune_kali_image(
+            "sha256:old",
+            &[
+                "ghcr.io/shmalex405/docker-kali:v0.1.89".into(),
+                "my-kali:backup".into(),
+            ],
+            "sha256:current",
+            KALI_REPO_MATCH,
+        );
+        assert!(!removable);
+    }
+
+    #[test]
+    fn only_registry_repos_are_pruned() {
+        assert!(DockerManager::is_registry_repo("ghcr.io/shmalex405/docker-kali"));
+        // A locally built toolkit: its `:previous` / `:backup` tags are the
+        // user's rollback copies, not leftover upgrades.
+        assert!(!DockerManager::is_registry_repo("maestro-toolkit"));
+    }
+
+    #[test]
+    fn platform_drift_uses_image_architecture() {
+        assert!(!DockerManager::is_wrong_arch("amd64"));
+        assert!(DockerManager::is_wrong_arch("arm64"));
+        assert!(!DockerManager::is_wrong_arch(""));
+    }
+
+    #[test]
+    fn kali_image_override_precedence() {
+        let def = "ghcr.io/shmalex405/docker-kali:v1.14.7";
+        // No overrides → build-time default.
+        assert_eq!(super::resolve_kali_image(None, None, def), (def.to_string(), None));
+        // File override (comments and blank lines skipped).
+        assert_eq!(
+            super::resolve_kali_image(None, Some("# my image\n\nmaestro-toolkit:local\n"), def).0,
+            "maestro-toolkit:local"
+        );
+        // Env beats file.
+        assert_eq!(
+            super::resolve_kali_image(Some("maestro-toolkit:dev"), Some("maestro-toolkit:local"), def).0,
+            "maestro-toolkit:dev"
+        );
+        // Malformed values are ignored, falling through to the next source.
+        assert_eq!(
+            super::resolve_kali_image(Some("bad image; rm -rf /"), Some("maestro-toolkit:local"), def).0,
+            "maestro-toolkit:local"
+        );
+        assert_eq!(super::resolve_kali_image(Some("  "), None, def).0, def);
+    }
+
+    #[test]
+    fn bind_normalization_matches_docker_desktop_vm_paths() {
+        // Exactly the pair that caused a recreate on every start.
+        let windows = r"C:\Users\grump\Documents\maestro\2. GitHub:/mnt/host-home/Documents/maestro/2. GitHub:ro";
+        let vm = "/run/desktop/mnt/host/c/Users/grump/Documents/maestro/2. GitHub:/mnt/host-home/Documents/maestro/2. GitHub:ro";
+        assert_eq!(DockerManager::normalize_bind(windows), DockerManager::normalize_bind(vm));
+        // Named volumes and POSIX sources are left alone.
+        assert_eq!(
+            DockerManager::normalize_bind("maestro-engine-data:/root/.pentest"),
+            "maestro-engine-data:/root/.pentest"
+        );
+        assert_eq!(
+            DockerManager::normalize_bind("/home/me/x:/mnt/x"),
+            "/home/me/x:/mnt/x"
+        );
     }
 }
 

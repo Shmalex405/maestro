@@ -13,6 +13,7 @@ import { Loader2, KeyRound } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Assessment } from '@/lib/types';
 import '@xterm/xterm/css/xterm.css';
+import { installTerminalCopy, openTerminalLink } from './terminal-clipboard';
 
 // Cache the container's claude-auth-in-container check so subsequent
 // TerminalView mounts (e.g. after the v0.1.60 key={…} remount that
@@ -263,7 +264,7 @@ export function TerminalView({
 
     // Add addons
     const fitAddon = new FitAddon();
-    const webLinksAddon = new WebLinksAddon();
+    const webLinksAddon = new WebLinksAddon(openTerminalLink);
     const searchAddon = new SearchAddon();
     const serializeAddon = new SerializeAddon();
     term.loadAddon(fitAddon);
@@ -273,6 +274,8 @@ export function TerminalView({
 
     // Open terminal in DOM
     term.open(terminalRef.current);
+    // User-initiated copy (Shift+drag, then Ctrl+Shift+C or right-click).
+    const removeCopy = installTerminalCopy(term, terminalRef.current);
 
     // Wheel scrolling.
     //
@@ -469,11 +472,37 @@ export function TerminalView({
       // which IS persistent (inside the bind mount), so we restore from
       // the latest backup before each spawn. No-op if the file already
       // exists or no backup has ever been written.
+      //
+      // The container now sets CLAUDE_CONFIG_DIR=/root/.claude (docker.rs),
+      // so Claude keeps this file at /root/.claude/.claude.json, inside the
+      // bind, and it survives recreates on its own. This step only seeds the
+      // new location once, from the old file or the latest backup, so an
+      // existing install keeps its state through the switch.
       const restoreClaudeJson =
-        'if [ ! -f /root/.claude.json ]; then ' +
-        'b=$(ls -t /root/.claude/backups/.claude.json.backup.* 2>/dev/null | head -1); ' +
-        '[ -n "$b" ] && cp "$b" /root/.claude.json; fi';
-      const shellCmd = `unset CLAUDECODE; cd ${JSON.stringify(projectDir)} && ${restoreClaudeJson}; ${useExec ? 'exec ' : ''}${rawCommand}`;
+        'if [ ! -f /root/.claude/.claude.json ]; then ' +
+        'b=/root/.claude.json; ' +
+        '[ -f "$b" ] || b=$(ls -t /root/.claude/backups/.claude.json.backup.* 2>/dev/null | head -1); ' +
+        '[ -n "$b" ] && cp "$b" /root/.claude/.claude.json; fi';
+      // MCP preflight (ready phase only). Claude Code does not stop when an
+      // MCP server fails to start — the session silently runs without
+      // Maestro's tools, so an agent can end up scanning with raw shell
+      // commands (no scope validation, no findings recorded). Start the
+      // server exactly as claude will (same generated config) and check it
+      // lists its tools. On failure: show the error, wait for the user, and
+      // if they continue anyway, tell claude not to improvise.
+      // NOTE: no single quotes in here — shellCmd is wrapped in '...' below.
+      const mcpPreflight = useExec
+        ? 'set --; ' +
+          'if ! node /opt/pentest/mcp-server/dist/preflight.js /root/.claude/maestro-mcp.json; then ' +
+          'printf "\\n\\033[1;31mMaestro security tools (MCP server) failed to start.\\033[0m\\n' +
+          'Claude would run without them: no scope checks and no findings recorded.\\n' +
+          'Press Enter to start Claude anyway, or close this tab.\\n"; read -r _; ' +
+          'set -- --append-system-prompt "Maestro MCP tools failed to load in this session. ' +
+          'Do not run security or scanning tools directly through the shell. ' +
+          'Tell the user the Maestro MCP server is not connected and stop."; ' +
+          'fi; '
+        : '';
+      const shellCmd = `unset CLAUDECODE; cd ${JSON.stringify(projectDir)} && ${restoreClaudeJson}; ${mcpPreflight}${useExec ? 'exec ' : ''}${rawCommand}${useExec ? ' "$@"' : ''}`;
 
       if (tmuxSessionName) {
         // tmux inside the container — must persist regardless of what the
@@ -542,6 +571,7 @@ export function TerminalView({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       updateSessionStatus(sessionKey, 'error', undefined, `Failed to spawn PTY: ${errorMessage}`);
+      removeCopy();
       term.dispose();
       return;
     }
@@ -690,17 +720,27 @@ export function TerminalView({
       tmuxSessionName,
     });
 
-    // Mark assessment as running
+    // Mark assessment as running — unless it is already completed. Opening
+    // a finished assessment's terminal (to read its transcript) used to flip
+    // it back to 'running'. Read the current status rather than the
+    // `assessment` prop, which this callback may hold a stale copy of.
     if (assessmentId) {
-      api.assessments.update(assessmentId, { status: 'running' }).then(() => {
-        onAssessmentStatusChanged?.();
-      }).catch(() => { /* ignore update errors */ });
+      api.assessments
+        .get(assessmentId)
+        .then((current) => {
+          if (current?.status === 'completed') return;
+          return api.assessments.update(assessmentId, { status: 'running' }).then(() => {
+            onAssessmentStatusChanged?.();
+          });
+        })
+        .catch(() => { /* ignore status errors */ });
     }
 
     // Register cleanup
     registerCleanup(sessionKey, () => {
       resizeObserver.disconnect();
       wheelTarget.removeEventListener('wheel', handleWheel, { capture: true });
+      removeCopy();
       try {
         const killResult = pty.kill() as unknown;
         if (killResult && typeof (killResult as Promise<unknown>).catch === 'function') {

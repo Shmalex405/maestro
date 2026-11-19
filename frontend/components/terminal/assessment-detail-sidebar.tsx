@@ -17,10 +17,12 @@ import {
   Calendar,
   Hash,
   CloudUpload,
+  CheckCircle2,
   Loader2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { api } from '@/lib/tauri-api';
+import { isLocalMode } from '@/lib/deployment-mode';
 import type { Assessment } from '@/lib/types';
 import { CostPanel } from '@/components/assessments/cost-panel';
 import { BaselineReusePanel } from '@/components/assessments/baseline-reuse-panel';
@@ -52,6 +54,8 @@ export function AssessmentDetailSidebar({
   const totalFindings = Object.values(findingsBySeverity).reduce((a, b) => a + b, 0);
   const queryClient = useQueryClient();
   const [completing, setCompleting] = useState(false);
+  // Read once: the data mode only changes through Settings, which reloads.
+  const [localMode] = useState(() => isLocalMode());
 
   // Manual "Complete & Push to dashboard" button. Available while the
   // assessment is running. Calls the MCP `complete_assessment` tool via
@@ -61,9 +65,15 @@ export function AssessmentDetailSidebar({
   // curated subset and is the recommended way to finalize.
   const handleCompleteAndPush = async () => {
     if (!assessment) return;
+    // Local mode has no dashboard to push to: completing copies the
+    // engine's findings and reports into this machine's database and
+    // closes the run.
     const proceed = window.confirm(
-      'Push all findings from this run to the dashboard and mark the assessment as completed?\n\n' +
-        'This is the manual fallback. If the report agent ran, it should have already done this with the curated finding set.',
+      localMode
+        ? 'Mark this assessment as completed?\n\n' +
+            'Maestro will first copy in the latest findings and reports from the assessment engine.'
+        : 'Push all findings from this run to the dashboard and mark the assessment as completed?\n\n' +
+            'This is the manual fallback. If the report agent ran, it should have already done this with the curated finding set.',
     );
     if (!proceed) return;
     setCompleting(true);
@@ -71,7 +81,21 @@ export function AssessmentDetailSidebar({
       const result = await api.assessments.complete(assessment.id);
       const pushed = result.pushed ?? 0;
       const failed = result.failed ?? 0;
-      if (failed > 0) {
+      if (result.mode === 'local') {
+        const findings = result.found_local ?? 0;
+        const reports = result.reports_synced ?? 0;
+        const summary =
+          `${findings} finding${findings === 1 ? '' : 's'} and ` +
+          `${reports} report${reports === 1 ? '' : 's'} from the engine`;
+        if (failed > 0) {
+          toast.warning('Assessment completed, but the engine could not be reached', {
+            description:
+              'Findings and reports will be copied in the next time you open the Findings or Reports page.',
+          });
+        } else {
+          toast.success('Assessment completed', { description: `Copied in ${summary}.` });
+        }
+      } else if (failed > 0) {
         toast.warning(
           `Pushed ${pushed} finding${pushed === 1 ? '' : 's'}, ${failed} failed`,
           { description: 'See logs for the failed IDs. Dashboard may be incomplete.' },
@@ -226,14 +250,20 @@ export function AssessmentDetailSidebar({
               className="w-full justify-start h-7 text-xs"
               onClick={handleCompleteAndPush}
               disabled={!canComplete}
-              title="Promote local findings to the dashboard and mark this assessment completed"
+              title={
+                localMode
+                  ? 'Copy in the latest findings and reports from the engine and mark this assessment completed'
+                  : 'Promote local findings to the dashboard and mark this assessment completed'
+              }
             >
               {completing ? (
                 <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+              ) : localMode ? (
+                <CheckCircle2 className="h-3 w-3 mr-2" />
               ) : (
                 <CloudUpload className="h-3 w-3 mr-2" />
               )}
-              Complete & push to dashboard
+              {localMode ? 'Complete assessment' : 'Complete & push to dashboard'}
             </Button>
           )}
           {onViewReport && (

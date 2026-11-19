@@ -1,3 +1,11 @@
+# Optional input: the MCP server's package.json + package-lock.json, so its
+# production dependencies (incl. better-sqlite3's native module) can be
+# installed into the image instead of on every new container's first start.
+# Empty by default; scripts/build-self-host-toolkit.sh supplies it with
+# `--build-context mcp-deps=<dir>`. Builds that don't (CI, compose) behave
+# as before — the container installs the deps at start.
+FROM scratch AS mcp-deps
+
 FROM kalilinux/kali-rolling:latest
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -67,6 +75,23 @@ RUN apt-get install -y --no-install-recommends golang-go npm libicu-dev \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
+# npm 12+ blocks dependency install scripts unless the package is listed in
+# `allow-scripts`. Without this, packages that set themselves up in an install
+# script are left half-installed with no error at build time:
+#   - @anthropic-ai/claude-code: `claude` is left as a stub that only prints
+#     "claude native binary not installed" (postinstall copies the binary).
+#   - better-sqlite3: no native module, so the MCP server crashes on start when
+#     the container runs `npm install --production` for it.
+#   - esbuild (pulled in by promptfoo): its binary check is skipped.
+# The global npmrc covers both the `npm install -g` lines below and the MCP
+# server's runtime install inside the container.
+RUN printf '%s\n' \
+      'allow-scripts[]=@anthropic-ai/claude-code' \
+      'allow-scripts[]=better-sqlite3' \
+      'allow-scripts[]=esbuild' \
+      >> "$(npm config get globalconfig)" \
+    && npm config get allow-scripts
+
 # Set Go path
 ENV GOPATH=/root/go
 ENV PATH=$PATH:$GOPATH/bin:/root/.local/bin
@@ -111,7 +136,15 @@ RUN npm install -g playwright@latest marked && \
     npx playwright install --with-deps chromium || echo "Playwright install skipped"
 
 # Install Go security tools (gitleaks for secrets detection, grype for dependency scanning)
-RUN go install github.com/zricethezav/gitleaks/v8@latest || echo "gitleaks install skipped"
+# Retried: `go install` needs sum.golang.org, and a single network blip used to
+# leave the image without gitleaks (the soft-fail `|| echo` below then got
+# cached, so rebuilding kept it missing). Still soft-fails after 3 attempts;
+# build-self-host-toolkit.sh reports a missing gitleaks at the end.
+RUN for i in 1 2 3; do \
+      go install github.com/zricethezav/gitleaks/v8@latest && exit 0; \
+      echo "gitleaks install attempt $i failed; retrying in 15s"; sleep 15; \
+    done; \
+    echo "gitleaks install skipped after 3 attempts"
 # `go install` drops the binary in GOPATH/bin, which isn't on PATH — symlink it so
 # `command -v gitleaks` (and the provenance gate's availability probe) finds it.
 RUN ln -sf "$(go env GOPATH 2>/dev/null || echo /root/go)/bin/gitleaks" /usr/local/bin/gitleaks 2>/dev/null || echo "gitleaks symlink skipped"
@@ -145,7 +178,10 @@ RUN python3 -m venv /opt/checkov \
 # RUN curl -sfL 'https://raw.githubusercontent.com/Checkmarx/kics/master/install.sh' | bash -s -- -b /usr/local/bin || true
 
 # Create working directories
-RUN mkdir -p /opt/pentest/{output,scripts,wordlists,repos}
+# Spelled out, not `{output,scripts,...}`: RUN uses /bin/sh (dash), which has
+# no brace expansion, so the brace form created one literal directory named
+# "{output,scripts,wordlists,repos}" and none of the real ones.
+RUN mkdir -p /opt/pentest/output /opt/pentest/scripts /opt/pentest/wordlists /opt/pentest/repos
 
 # Download common wordlists
 RUN wget -q https://raw.githubusercontent.com/danielmiessler/SecLists/master/Discovery/Web-Content/common.txt \
@@ -396,7 +432,12 @@ RUN echo "=== Identity tooling smoke check ===" && \
 # confirmed present in 2.1.162; do NOT pin below it, or `/assess` falls back to
 # the slower Team protocol (set `orchestrator: team` in the profile if you must
 # run an older CLI). 2.1.152 is the "stable" tag but is unverified for Workflow.
-RUN npm install -g @anthropic-ai/claude-code@2.1.162
+RUN npm install -g @anthropic-ai/claude-code@2.1.162 \
+    && claude --version
+# Keep the CLI on the pinned version above. Its auto-updater reinstalls via npm
+# at runtime, which drifts off the pin (and, before allow-scripts was set,
+# replaced the working binary with the "not installed" stub mid-session).
+ENV DISABLE_AUTOUPDATER=1
 
 # OpenAI Codex CLI — the parallel "brain" for users who pick GPT-5.5 instead
 # of Claude. Same MCP wire as Claude Code, different LLM. Auth lives in
@@ -462,6 +503,26 @@ RUN mkdir -p /opt/pentest/scripts/node_modules && \
     for m in playwright playwright-core marked; do \
       ln -sfn "$(npm root -g)/$m" "/opt/pentest/scripts/node_modules/$m"; \
     done
+
+# Pre-install the MCP server's production dependencies when the build was
+# given them (see the mcp-deps stage at the top). The container start script
+# (docker.rs start_mcp_server) skips its own `npm install` when node_modules
+# exists and .pkg-stamp matches the synced package.json, so a new container
+# starts its MCP server immediately and without network access. If the app
+# later ships a different package.json, the start script reinstalls as before.
+COPY --from=mcp-deps / /tmp/mcp-deps/
+RUN if [ -f /tmp/mcp-deps/package.json ]; then \
+      mkdir -p /opt/pentest/mcp-server && \
+      cp /tmp/mcp-deps/package.json /tmp/mcp-deps/package-lock.json /opt/pentest/mcp-server/ && \
+      cd /opt/pentest/mcp-server && \
+      npm ci --omit=dev && \
+      cp package.json .pkg-stamp && \
+      node -e "require('better-sqlite3')" && \
+      echo "MCP server dependencies pre-installed"; \
+    else \
+      echo "No mcp-deps build context — MCP dependencies install at container start"; \
+    fi; \
+    rm -rf /tmp/mcp-deps
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["tail", "-f", "/dev/null"]

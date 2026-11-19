@@ -80,8 +80,11 @@ impl From<crate::database::Report> for Report {
 pub async fn list_reports(params: Option<ListReportsParams>) -> Result<PaginatedResult<Vec<Report>>> {
     info!("Listing reports");
 
-    let db = Database::new()?;
     let assessment_id = params.as_ref().and_then(|p| p.assessment_id.as_deref());
+    // Local mode: copy in any reports the engine has recorded since the last
+    // look (all running assessments when no filter is given).
+    crate::commands::engine_sync::sync_best_effort(assessment_id).await;
+    let db = Database::new()?;
     let page = params.as_ref().and_then(|p| p.page).unwrap_or(1);
     let limit = params.as_ref().and_then(|p| p.limit).unwrap_or(20);
 
@@ -488,6 +491,15 @@ pub async fn download_url_to_downloads(
     }
     let bytes = response.bytes().await?;
 
+    let target = unique_download_target(&filename)?;
+    std::fs::write(&target, &bytes)?;
+    info!("Saved report download to {}", target.display());
+    Ok(target.to_string_lossy().to_string())
+}
+
+/// A path in the user's Downloads folder for `filename` that does not
+/// overwrite an existing file ("name (1).pdf", "name (2).pdf", ...).
+fn unique_download_target(filename: &str) -> Result<PathBuf> {
     let downloads_dir = dirs::download_dir()
         .ok_or_else(|| AppError::Config("Could not locate Downloads folder".to_string()))?;
     std::fs::create_dir_all(&downloads_dir)?;
@@ -514,9 +526,85 @@ pub async fn download_url_to_downloads(
         target = downloads_dir.join(candidate);
         i += 1;
     }
+    Ok(target)
+}
 
-    std::fs::write(&target, &bytes)?;
-    info!("Saved report download to {}", target.display());
+// =============================================================================
+// Local-mode PDFs
+// =============================================================================
+//
+// In local (self-host) mode there is no cloud artifact store: the engine
+// writes report PDFs to ~/.kali-mcp-pentest/reports/<assessment>/ and the
+// row's file_path points there. These two commands let the Reports page
+// preview and save those files. They only ever read a PDF that lives inside
+// that reports directory, whatever file_path a row claims.
+
+/// Largest local PDF the viewer will load into memory.
+const MAX_LOCAL_PDF_BYTES: u64 = 200 * 1024 * 1024;
+
+/// Resolve a report's local PDF, refusing anything outside the reports dir.
+fn local_report_pdf_path(id: &str) -> Result<PathBuf> {
+    let db = Database::new()?;
+    let report = db
+        .get_report(id)?
+        .ok_or_else(|| AppError::NotFound(format!("Report not found: {id}")))?;
+    let raw = report
+        .file_path
+        .ok_or_else(|| AppError::NotFound("Report has no local file".to_string()))?;
+
+    let reports_dir = dirs::home_dir()
+        .ok_or_else(|| AppError::Config("Home directory not resolvable".to_string()))?
+        .join(".kali-mcp-pentest")
+        .join("reports");
+    let reports_dir = reports_dir
+        .canonicalize()
+        .map_err(|e| AppError::NotFound(format!("Reports folder not found: {e}")))?;
+    // canonicalize resolves `..` and symlinks, so the prefix check below
+    // cannot be sidestepped by a crafted path.
+    let path = PathBuf::from(&raw)
+        .canonicalize()
+        .map_err(|e| AppError::NotFound(format!("Report file not found ({raw}): {e}")))?;
+    if !path.starts_with(&reports_dir) {
+        return Err(AppError::Other(format!(
+            "Refusing to open a report file outside {}",
+            reports_dir.display()
+        )));
+    }
+    let is_pdf = path
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("pdf"))
+        .unwrap_or(false);
+    if !is_pdf {
+        return Err(AppError::Other("Report file is not a PDF".to_string()));
+    }
+    Ok(path)
+}
+
+/// Raw bytes of a local report PDF, for the inline preview.
+#[tauri::command]
+pub async fn read_local_report_pdf(id: String) -> Result<tauri::ipc::Response> {
+    let path = local_report_pdf_path(&id)?;
+    let size = std::fs::metadata(&path)?.len();
+    if size > MAX_LOCAL_PDF_BYTES {
+        return Err(AppError::Other(format!(
+            "Report PDF is too large to preview ({} MB)",
+            size / (1024 * 1024)
+        )));
+    }
+    Ok(tauri::ipc::Response::new(std::fs::read(&path)?))
+}
+
+/// Copy a local report PDF into the Downloads folder; returns the new path.
+#[tauri::command]
+pub async fn save_local_report_pdf(id: String) -> Result<String> {
+    let path = local_report_pdf_path(&id)?;
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "report.pdf".to_string());
+    let target = unique_download_target(&name)?;
+    std::fs::copy(&path, &target)?;
+    info!("Saved local report {} to {}", id, target.display());
     Ok(target.to_string_lossy().to_string())
 }
 

@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Loader2, KeyRound } from 'lucide-react';
 import type { Assessment } from '@/lib/types';
 import '@xterm/xterm/css/xterm.css';
+import { installTerminalCopy, openTerminalLink } from './terminal-clipboard';
 
 interface CodexTerminalViewProps {
   assessmentId?: string;
@@ -267,7 +268,7 @@ export function CodexTerminalView({
     });
 
     const fitAddon = new FitAddon();
-    const webLinksAddon = new WebLinksAddon();
+    const webLinksAddon = new WebLinksAddon(openTerminalLink);
     const searchAddon = new SearchAddon();
     const serializeAddon = new SerializeAddon();
     term.loadAddon(fitAddon);
@@ -276,6 +277,8 @@ export function CodexTerminalView({
     term.loadAddon(serializeAddon);
 
     term.open(terminalRef.current);
+    // User-initiated copy (Shift+drag, then Ctrl+Shift+C or right-click).
+    const removeCopy = installTerminalCopy(term, terminalRef.current);
 
     // Wheel scrolling. See terminal-view.tsx for the full rationale;
     // Codex's TUI behaves the same as Claude's around mouse-mode capture,
@@ -375,7 +378,20 @@ export function CodexTerminalView({
       const containerName = 'kali-pentest';
       const program = await api.system.resolveDockerPath().catch(() => 'docker');
       const useExec = authPhase === 'ready';
-      const shellCmd = `cd ${JSON.stringify(projectDir)} && ${useExec ? 'exec ' : ''}${rawCommand}`;
+      // MCP preflight (ready phase only) — same check as terminal-view.tsx:
+      // start the server exactly as Codex will (its generated config.toml)
+      // and confirm it lists tools, so Codex never silently runs without
+      // Maestro's tools. Codex has no flag to add a system instruction, so a
+      // failure shows the error and waits; continuing is the user's call.
+      // NOTE: no single quotes in here — shellCmd is wrapped in '...' below.
+      const mcpPreflight = useExec
+        ? 'if ! node /opt/pentest/mcp-server/dist/preflight.js /root/.codex/config.toml; then ' +
+          'printf "\\n\\033[1;31mMaestro security tools (MCP server) failed to start.\\033[0m\\n' +
+          'Codex would run without them: no scope checks and no findings recorded.\\n' +
+          'Press Enter to start Codex anyway, or close this tab.\\n"; read -r _; ' +
+          'fi; '
+        : '';
+      const shellCmd = `cd ${JSON.stringify(projectDir)} && ${mcpPreflight}${useExec ? 'exec ' : ''}${rawCommand}`;
 
       if (tmuxSessionName) {
         // Detached-create + separate-attach so the session survives any
@@ -414,6 +430,7 @@ export function CodexTerminalView({
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       updateSessionStatus(sessionKey, 'error', undefined, `Failed to spawn PTY: ${errorMessage}`);
+      removeCopy();
       term.dispose();
       return;
     }
@@ -513,15 +530,24 @@ export function CodexTerminalView({
       tmuxSessionName,
     });
 
+    // Mark assessment as running — unless it is already completed (see the
+    // same block in terminal-view.tsx).
     if (assessmentId) {
-      api.assessments.update(assessmentId, { status: 'running' }).then(() => {
-        onAssessmentStatusChanged?.();
-      }).catch(() => { /* ignore update errors */ });
+      api.assessments
+        .get(assessmentId)
+        .then((current) => {
+          if (current?.status === 'completed') return;
+          return api.assessments.update(assessmentId, { status: 'running' }).then(() => {
+            onAssessmentStatusChanged?.();
+          });
+        })
+        .catch(() => { /* ignore status errors */ });
     }
 
     registerCleanup(sessionKey, () => {
       resizeObserver.disconnect();
       wheelTarget.removeEventListener('wheel', handleWheel, { capture: true });
+      removeCopy();
       try {
         const killResult = pty.kill() as unknown;
         if (killResult && typeof (killResult as Promise<unknown>).catch === 'function') {

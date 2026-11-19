@@ -812,6 +812,9 @@ pub struct CompleteAssessmentResult {
     pub failed: i32,
     pub assessment_status: String,
     pub errors: serde_json::Value,
+    /// Local mode: reports copied in from the engine on completion.
+    #[serde(default)]
+    pub reports_synced: i32,
 }
 
 /// Manual "Complete & Push to dashboard" trigger from the desktop.
@@ -843,6 +846,19 @@ pub async fn complete_assessment(
             assessment_id
         );
         let requested = finding_ids.as_ref().map(|v| v.len()).unwrap_or(0) as i32;
+        // The engine keeps its own DB; pull its final findings and reports
+        // into this one before closing the run, so the Reports page and
+        // findings list reflect what the engine produced. A failed pull does
+        // not block completion (the next list call retries), but it is
+        // reported back so the UI can say so instead of implying success.
+        let (stats, sync_error) =
+            match crate::commands::engine_sync::sync_assessment(&assessment_id).await {
+                Ok(s) => (s, None),
+                Err(e) => {
+                    warn!("complete_assessment: engine sync failed for {assessment_id}: {e}");
+                    (Default::default(), Some(e.to_string()))
+                }
+            };
         let db = crate::database::Database::new()?;
         // update_assessment_status also stamps completed_at, which the plain
         // field update would leave null.
@@ -851,13 +867,17 @@ pub async fn complete_assessment(
             assessment_id,
             mode: "local".to_string(),
             requested,
-            // Nothing is "found" or "pushed" because nothing moves — the rows
-            // never left this machine.
-            found_local: requested,
+            // Local mode has no cloud to push to: report what was copied in
+            // from the engine instead.
+            found_local: stats.findings as i32,
             pushed: 0,
-            failed: 0,
+            failed: if sync_error.is_some() { 1 } else { 0 },
             assessment_status: "completed".to_string(),
-            errors: serde_json::json!([]),
+            errors: match sync_error {
+                Some(e) => serde_json::json!([{ "engine_sync": e }]),
+                None => serde_json::json!([]),
+            },
+            reports_synced: stats.reports as i32,
         });
     }
 

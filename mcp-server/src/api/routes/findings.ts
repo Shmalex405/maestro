@@ -221,6 +221,22 @@ findingsRouter.get("/export", async (req: Request, res: Response) => {
 });
 
 // Get single finding with evidence sources
+// IDs of findings the engine has deleted (see deleted_findings in
+// log-store.ts). The desktop applies these to its own copies in local mode.
+// Declared before "/:id" so "deleted" is not taken as a finding id.
+findingsRouter.get("/deleted", (_req: Request, res: Response) => {
+  try {
+    const db = getDatabase();
+    const ids = (
+      db.prepare("SELECT id FROM deleted_findings ORDER BY deleted_at").all() as { id: string }[]
+    ).map((r) => r.id);
+    res.json({ data: ids, total: ids.length });
+  } catch (error) {
+    console.error("Error listing deleted findings:", error);
+    res.status(500).json({ error: "Failed to list deleted findings" });
+  }
+});
+
 findingsRouter.get("/:id", async (req: Request, res: Response) => {
   try {
     const { id } = req.params;

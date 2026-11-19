@@ -114,6 +114,46 @@ pub struct Finding {
     pub evidence_type: Option<String>,
 }
 
+/// A finding as returned by the engine's `GET /api/findings/assessment/:id`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EngineFinding {
+    pub id: String,
+    pub title: String,
+    pub severity: String,
+    pub description: Option<String>,
+    pub target: Option<String>,
+    pub evidence: Option<String>,
+    pub remediation: Option<String>,
+    pub cve: Option<String>,
+    pub cwe: Option<String>,
+    pub status: Option<String>,
+    pub exploitable: Option<String>,
+    pub category: Option<String>,
+    pub file_path: Option<String>,
+    pub line_start: Option<i64>,
+    pub line_end: Option<i64>,
+    pub code_snippet: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+/// A report row as returned by the engine's `GET /api/reports/assessment/:id`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct EngineReport {
+    pub id: String,
+    pub assessment_id: String,
+    pub name: String,
+    pub format: String,
+    pub file_path: Option<String>,
+    pub created_at: Option<String>,
+    pub findings_count: Option<i64>,
+    pub critical_count: Option<i64>,
+    pub high_count: Option<i64>,
+    pub medium_count: Option<i64>,
+    pub low_count: Option<i64>,
+    pub exploitable_count: Option<i64>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Report {
     pub id: String,
@@ -732,6 +772,17 @@ impl Database {
             [],
         );
 
+        // Backfill: local runs never got started_at (the generic update that
+        // marks them running didn't stamp it — fixed in update_assessment), so
+        // they were missing from the Reports page's "Completed Assessments"
+        // panel. Use created_at, the closest recorded time. Idempotent.
+        let _ = self.conn.execute(
+            "UPDATE assessments SET started_at = created_at \
+             WHERE started_at IS NULL \
+               AND status IN ('running', 'completed', 'failed', 'incomplete', 'cancelled')",
+            [],
+        );
+
         // Migration: Add report tracking columns
         let _ = self.conn.execute(
             "ALTER TABLE reports ADD COLUMN content TEXT",
@@ -1167,7 +1218,16 @@ impl Database {
                 assessment_type = COALESCE(?3, assessment_type),
                 name = COALESCE(?4, name),
                 status = COALESCE(?5, status),
-                targets = COALESCE(?6, targets)
+                targets = COALESCE(?6, targets),
+                -- Stamp run times like update_assessment_status does. The
+                -- terminal marks a run 'running' through this generic update,
+                -- so without this started_at stayed NULL and the Reports
+                -- page's "Completed Assessments" panel (which lists runs that
+                -- started) never showed any local run.
+                started_at = CASE WHEN ?5 = 'running' AND started_at IS NULL
+                                  THEN ?2 ELSE started_at END,
+                completed_at = CASE WHEN ?5 IN ('completed', 'failed')
+                                    THEN ?2 ELSE completed_at END
             WHERE id = ?1
             "#,
             params![id, now, assessment_type, name, status, targets_json],
@@ -3082,6 +3142,134 @@ file_path, line_start, line_end, code_snippet, cwe,
             low_count,
             exploitable_count,
         })
+    }
+
+    // =========================================================================
+    // Engine sync (local mode)
+    // =========================================================================
+    //
+    // The engine in the container owns its own SQLite DB; the desktop is the
+    // only writer of this one. These upserts copy engine rows in by their
+    // engine id, so repeated syncs update rather than duplicate.
+
+    /// Insert or update a finding pulled from the engine.
+    pub fn upsert_engine_finding(&self, assessment_id: &str, f: &EngineFinding) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let created_at = f.created_at.clone().unwrap_or_else(|| now.clone());
+        let updated_at = f.updated_at.clone().unwrap_or_else(|| created_at.clone());
+        let cve_ids = f.cve.as_ref().map(|c| serde_json::to_string(&vec![c])).transpose()?;
+        self.conn.execute(
+            r#"
+            INSERT INTO findings (id, assessment_id, title, severity, status, target, description,
+                                  evidence, remediation, cve, cve_ids, cwe, category, exploitable,
+                                  file_path, line_start, line_end, code_snippet, source,
+                                  created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                    ?15, ?16, ?17, ?18, 'engine', ?19, ?20)
+            ON CONFLICT(id) DO UPDATE SET
+                assessment_id = excluded.assessment_id, title = excluded.title,
+                severity = excluded.severity, status = excluded.status,
+                target = excluded.target, description = excluded.description,
+                evidence = excluded.evidence, remediation = excluded.remediation,
+                cve = excluded.cve, cve_ids = excluded.cve_ids, cwe = excluded.cwe,
+                category = excluded.category, exploitable = excluded.exploitable,
+                file_path = excluded.file_path, line_start = excluded.line_start,
+                line_end = excluded.line_end, code_snippet = excluded.code_snippet,
+                updated_at = excluded.updated_at
+            "#,
+            params![
+                f.id,
+                assessment_id,
+                f.title,
+                f.severity,
+                f.status.as_deref().unwrap_or("open"),
+                f.target.as_deref().unwrap_or(""),
+                f.description.as_deref().unwrap_or(""),
+                f.evidence,
+                f.remediation,
+                f.cve,
+                cve_ids,
+                f.cwe,
+                f.category,
+                f.exploitable,
+                f.file_path,
+                f.line_start,
+                f.line_end,
+                f.code_snippet,
+                created_at,
+                updated_at,
+            ],
+        ).map_err(AppError::Database)?;
+        Ok(())
+    }
+
+    /// Insert or update a report pulled from the engine. `host_file_path` is
+    /// the engine's file path already mapped to its location on this machine.
+    pub fn upsert_engine_report(&self, r: &EngineReport, host_file_path: Option<&str>) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        let created_at = r.created_at.clone().unwrap_or_else(|| now.clone());
+        self.conn.execute(
+            r#"
+            INSERT INTO reports (id, assessment_id, name, format, file_path, created_at, updated_at,
+                                 findings_count, critical_count, high_count, medium_count,
+                                 low_count, exploitable_count)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name, format = excluded.format,
+                file_path = excluded.file_path, updated_at = excluded.updated_at,
+                findings_count = excluded.findings_count,
+                critical_count = excluded.critical_count, high_count = excluded.high_count,
+                medium_count = excluded.medium_count, low_count = excluded.low_count,
+                exploitable_count = excluded.exploitable_count
+            "#,
+            params![
+                r.id,
+                r.assessment_id,
+                r.name,
+                r.format,
+                host_file_path,
+                created_at,
+                now,
+                r.findings_count.unwrap_or(0),
+                r.critical_count.unwrap_or(0),
+                r.high_count.unwrap_or(0),
+                r.medium_count.unwrap_or(0),
+                r.low_count.unwrap_or(0),
+                r.exploitable_count.unwrap_or(0),
+            ],
+        ).map_err(AppError::Database)?;
+        Ok(())
+    }
+
+    /// Remove findings the engine reports as deleted. Only rows that came from
+    /// the engine (`source = 'engine'`) are touched — never findings created
+    /// or imported in the desktop. Returns the number of rows removed.
+    pub fn delete_engine_findings(&self, ids: &[String]) -> Result<usize> {
+        let mut removed = 0;
+        for id in ids {
+            removed += self
+                .conn
+                .execute(
+                    "DELETE FROM findings WHERE id = ?1 AND source = 'engine'",
+                    params![id],
+                )
+                .map_err(AppError::Database)?;
+        }
+        Ok(removed)
+    }
+
+    /// IDs of the most recently created assessments, any status.
+    pub fn recent_assessment_ids(&self, limit: u32) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM assessments ORDER BY created_at DESC LIMIT ?1")
+            .map_err(AppError::Database)?;
+        let ids = stmt
+            .query_map(params![limit], |row| row.get::<_, String>(0))
+            .map_err(AppError::Database)?
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(AppError::Database)?;
+        Ok(ids)
     }
 
     // =========================================================================
