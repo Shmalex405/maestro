@@ -426,17 +426,35 @@ fn prepare_mcp_server_workspace(app_handle: &AppHandle) -> Result<String> {
     std::fs::create_dir_all(&host_dest)
         .map_err(|e| AppError::Config(format!("create host_dest dir: {e}")))?;
 
-    // Stamp file detects whether the bundled MCP server has changed since
-    // the last sync — only re-copy when it has, to avoid hammering the disk
-    // on every container start.
+    // Re-copy when the bundled MCP server differs from the host copy.
+    //
+    // This used to compare only a `.version-stamp` against the app version,
+    // which missed two real cases:
+    //   - a rebuilt app with the same version number (self-host builds)
+    //     never deployed its engine changes; and
+    //   - an edit made to the host copy from inside the container (the
+    //     in-container agent can write this bind mount) survived every
+    //     restart, silently diverging the running engine from the bundle.
+    // So also compare a content fingerprint of both dist/ trees. Hashing a
+    // few MB of JS on container start is cheap next to starting Docker.
     let stamp_path = host_dest.join(".version-stamp");
     let current_version = app_version(app_handle);
     let stamp_matches = std::fs::read_to_string(&stamp_path)
         .ok()
         .map(|s| s.trim() == current_version)
         .unwrap_or(false);
+    let content_matches = match (dir_fingerprint(&bundled_dist), dir_fingerprint(&host_dest_dist)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if stamp_matches && !content_matches {
+        warn!(
+            "MCP server copy at {} differs from the bundled one (edited or stale) — re-syncing",
+            host_dest_dist.display()
+        );
+    }
 
-    if !stamp_matches {
+    if !stamp_matches || !content_matches {
         if host_dest_dist.exists() {
             std::fs::remove_dir_all(&host_dest_dist).ok();
         }
@@ -476,6 +494,46 @@ fn app_version(app_handle: &AppHandle) -> String {
         .version
         .clone()
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+}
+
+/// Stable content fingerprint of a directory tree: FNV-1a 64 over every
+/// file's relative path and bytes, visited in sorted order. Not
+/// cryptographic — it detects drift between the bundled and host copies of
+/// the MCP server, it does not defend against a deliberate collision.
+fn dir_fingerprint(root: &std::path::Path) -> std::io::Result<u64> {
+    const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    fn feed(hash: &mut u64, bytes: &[u8]) {
+        for b in bytes {
+            *hash ^= u64::from(*b);
+            *hash = hash.wrapping_mul(PRIME);
+        }
+    }
+    fn walk(
+        dir: &std::path::Path,
+        rel: &str,
+        hash: &mut u64,
+    ) -> std::io::Result<()> {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<std::io::Result<_>>()?;
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let rel_path = format!("{rel}/{name}");
+            let ty = entry.file_type()?;
+            if ty.is_dir() {
+                walk(&entry.path(), &rel_path, hash)?;
+            } else if ty.is_file() {
+                feed(hash, rel_path.as_bytes());
+                feed(hash, &[0]);
+                feed(hash, &std::fs::read(entry.path())?);
+                feed(hash, &[0]);
+            }
+        }
+        Ok(())
+    }
+    let mut hash = OFFSET;
+    walk(root, "", &mut hash)?;
+    Ok(hash)
 }
 
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
