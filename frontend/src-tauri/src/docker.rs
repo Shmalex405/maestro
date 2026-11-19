@@ -38,8 +38,69 @@ use crate::process_ext::NoWindow;
 /// The startup gate checks for the image locally before attempting any
 /// registry pull, so a local-only tag is used as-is and never fetched. See
 /// SELF-HOSTING.md.
+///
+/// The build-time tag can be overridden at runtime, so an installed app can
+/// run a locally built or differently tagged toolkit without being rebuilt
+/// (and without re-tagging the image after every update). First match wins:
+///   1. `MAESTRO_KALI_IMAGE` environment variable
+///   2. `~/.kali-mcp-pentest/kali-image` — first non-empty, non-# line
+///   3. the build-time `KALI_IMAGE`, else `ghcr.io/shmalex405/docker-kali:latest`
+/// Resolved once per run; a malformed override is logged and ignored.
 pub fn kali_image() -> &'static str {
-    option_env!("KALI_IMAGE").unwrap_or("ghcr.io/shmalex405/docker-kali:latest")
+    static IMAGE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    IMAGE.get_or_init(|| {
+        let built_in = option_env!("KALI_IMAGE")
+            .unwrap_or("ghcr.io/shmalex405/docker-kali:latest")
+            .to_string();
+        let from_env = std::env::var("MAESTRO_KALI_IMAGE").ok();
+        let from_file = dirs::home_dir().and_then(|h| {
+            std::fs::read_to_string(h.join(".kali-mcp-pentest").join("kali-image")).ok()
+        });
+        match resolve_kali_image(from_env.as_deref(), from_file.as_deref(), &built_in) {
+            (image, Some(source)) => {
+                info!("Using toolkit image {image} (from {source})");
+                image
+            }
+            (image, None) => image,
+        }
+    })
+}
+
+/// Pick the toolkit image from the runtime overrides, falling back to the
+/// build-time default. Returns the image and, when overridden, its source.
+fn resolve_kali_image(
+    from_env: Option<&str>,
+    from_file: Option<&str>,
+    built_in: &str,
+) -> (String, Option<&'static str>) {
+    if let Some(v) = from_env.map(str::trim).filter(|v| !v.is_empty()) {
+        if is_valid_image_ref(v) {
+            return (v.to_string(), Some("MAESTRO_KALI_IMAGE"));
+        }
+        warn!("Ignoring MAESTRO_KALI_IMAGE={v:?}: not a valid image reference");
+    }
+    if let Some(text) = from_file {
+        let line = text
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty() && !l.starts_with('#'));
+        if let Some(v) = line {
+            if is_valid_image_ref(v) {
+                return (v.to_string(), Some("~/.kali-mcp-pentest/kali-image"));
+            }
+            warn!("Ignoring ~/.kali-mcp-pentest/kali-image ({v:?}): not a valid image reference");
+        }
+    }
+    (built_in.to_string(), None)
+}
+
+/// A plausible Docker image reference: `name[:tag][@digest]`, no spaces or
+/// shell metacharacters (the value ends up in docker commands and logs).
+fn is_valid_image_ref(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 255
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || "._-/:@".contains(c))
+        && !s.starts_with(['-', '/', ':', '.'])
 }
 
 const CONTAINER_NAME: &str = "kali-pentest";
@@ -1524,6 +1585,24 @@ impl DockerManager {
 SOURCE="{source}"
 MCP_DIR="/opt/pentest/mcp-server"
 
+# One start at a time: the container start and the "ensure running" check
+# can both run this script concurrently, and two copies redeploying dist/ at
+# once collide and launch two servers. A later run waits here, then finds
+# the first run's server below and exits.
+exec 9> /tmp/mcp-server-start.lock
+flock -w 120 9 || true
+
+# A server launched moments ago may not be listening yet (the start and the
+# follow-up "ensure running" check can arrive seconds apart). Give it time
+# rather than redeploying underneath it and starting a second one.
+if ! curl -sf http://127.0.0.1:3001/health > /dev/null 2>&1 && \
+   pgrep -f "^node dist/autonomous-runner.js" > /dev/null 2>&1; then
+    for i in $(seq 1 20); do
+        curl -sf http://127.0.0.1:3001/health > /dev/null 2>&1 && break
+        sleep 1
+    done
+fi
+
 # Skip only if the server is running AND its deployed code matches the
 # synced copy. If the desktop has synced new code (an app update or rebuild),
 # stop the old server so the new code is deployed below — otherwise a
@@ -1535,7 +1614,7 @@ if curl -sf http://127.0.0.1:3001/health > /dev/null 2>&1; then
         exit 0
     fi
     echo "MCP server code changed; restarting"
-    pkill -f "node dist/autonomous-runner.js" || true
+    pkill -f "^node dist/autonomous-runner.js" || true
     for i in 1 2 3 4 5 6 7 8 9 10; do
         curl -sf http://127.0.0.1:3001/health > /dev/null 2>&1 || break
         sleep 1
@@ -1565,7 +1644,10 @@ fi
 
 # Start the autonomous HTTP server in the background
 cd "$MCP_DIR"
-nohup node dist/autonomous-runner.js > /tmp/mcp-server.log 2>&1 &
+# `9>&-`: don't let the long-running server inherit the start lock's file
+# descriptor, or it would hold the lock for its whole life and every later
+# start would wait out the flock timeout.
+nohup node dist/autonomous-runner.js 9>&- > /tmp/mcp-server.log 2>&1 &
 echo "MCP server started (PID: $!)"
 "#,
             source = host_mcp_path,
@@ -1949,6 +2031,29 @@ mod tests {
         assert!(!DockerManager::is_wrong_arch("amd64"));
         assert!(DockerManager::is_wrong_arch("arm64"));
         assert!(!DockerManager::is_wrong_arch(""));
+    }
+
+    #[test]
+    fn kali_image_override_precedence() {
+        let def = "ghcr.io/shmalex405/docker-kali:v1.14.7";
+        // No overrides → build-time default.
+        assert_eq!(super::resolve_kali_image(None, None, def), (def.to_string(), None));
+        // File override (comments and blank lines skipped).
+        assert_eq!(
+            super::resolve_kali_image(None, Some("# my image\n\nmaestro-toolkit:local\n"), def).0,
+            "maestro-toolkit:local"
+        );
+        // Env beats file.
+        assert_eq!(
+            super::resolve_kali_image(Some("maestro-toolkit:dev"), Some("maestro-toolkit:local"), def).0,
+            "maestro-toolkit:dev"
+        );
+        // Malformed values are ignored, falling through to the next source.
+        assert_eq!(
+            super::resolve_kali_image(Some("bad image; rm -rf /"), Some("maestro-toolkit:local"), def).0,
+            "maestro-toolkit:local"
+        );
+        assert_eq!(super::resolve_kali_image(Some("  "), None, def).0, def);
     }
 
     #[test]
