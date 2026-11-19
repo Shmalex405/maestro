@@ -130,6 +130,11 @@ pub struct CreateFindingData {
 pub async fn list_findings(params: Option<ListFindingsParams>) -> Result<PaginatedResult<Vec<Finding>>> {
     info!("Listing findings with params: {:?}", params);
 
+    // Local mode: copy in findings the engine has recorded since the last look
+    // (all running assessments when no assessment filter is given).
+    let sync_target = params.as_ref().and_then(|p| p.assessment_id.clone());
+    crate::commands::engine_sync::sync_best_effort(sync_target.as_deref()).await;
+
     let db = Database::new()?;
     let params = params.unwrap_or(ListFindingsParams {
         assessment_id: None,

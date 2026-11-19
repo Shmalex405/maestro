@@ -1,10 +1,18 @@
-import { upsertFinding, getFindings, getFindingsForAssessment, generateReportContent, FindingInput, saveReportRecord, compareAssessments, getFindingById } from "../integrations/findings-db";
+import { upsertFinding, getFindings, getFindingsForAssessment, generateReportContent, FindingInput, saveReportRecord, countReportsForAssessment, compareAssessments, getFindingById } from "../integrations/findings-db";
 import { createJiraTicket, createJiraTicketFromReport, listJiraProjects, listJiraBoards, addJiraRemoteLink } from "../integrations/jira";
 import { openRemediationPR, recordFindingPR, type FileEdit } from "../integrations/github";
 import { uploadToSharePoint } from "../integrations/sharepoint";
 import { sendEmail } from "../integrations/email";
 import { generateProfessionalHtml } from "../integrations/report-html-template";
-import { executeInKali } from "../utils/docker-exec";
+import { executeInKali, executeInKaliDetailed } from "../utils/docker-exec";
+
+/**
+ * Where local-mode (no cloud backend) PDFs are kept. This is the one
+ * container path bound writable into the user's home
+ * (~/.kali-mcp-pentest/reports on the host), so files here survive
+ * container recreates and the desktop can open them.
+ */
+const LOCAL_REPORTS_DIR = "/mnt/host-home/.kali-mcp-pentest/reports";
 import { hasCloudSession, cloudRequest, cloudUploadFile, CloudSessionError } from "../integrations/cloud-session";
 import { buildProvenancePromotion, getAvailability, snapshotToolAvailability } from "../logging/tool-provenance";
 
@@ -879,16 +887,34 @@ export const reportingHandlers: Record<string, Function> = {
             return { uploadStatus: "failed", uploadError: `artifact_upload_failed: ${msg}` };
           }
         } else {
-          // Dev/offline only — local-SQLite path. Tracks the row
-          // in the desktop's local DB for testing without a cloud
-          // backend. file_path here points at the temp render
-          // output (not a stable location) so local-mode users
-          // should re-render rather than rely on persistence.
+          // Local mode (no cloud backend). The PDF must outlive this
+          // call: it used to be recorded at the temp render path and
+          // then deleted by the cleanup below, so the Reports page
+          // pointed at a file that no longer existed. Copy it to the
+          // host-visible reports dir — the one writable bind into the
+          // user's home — and record that path. The desktop pulls this
+          // row over GET /api/reports/assessment/:id and maps the path
+          // to its host location.
+          // Both names come from the agent and land in a shell command:
+          // restrict them to a safe character set.
+          const safe = (s: string) => s.replace(/[^A-Za-z0-9._-]/g, "_");
+          const stableDir = `${LOCAL_REPORTS_DIR}/${safe(assessment_id)}`;
+          const stablePath = `${stableDir}/${safe(output_filename)}`;
+          const copy = await executeInKaliDetailed(
+            `mkdir -p '${stableDir}' && cp -f '${outputPath}' '${stablePath}'`,
+          );
+          if (copy.exitCode !== 0) {
+            // Keep the rendered PDF so nothing is lost; report the failure.
+            return {
+              uploadStatus: "failed",
+              uploadError: `could not copy PDF to ${stablePath}: ${copy.stderr || copy.stdout}`,
+            };
+          }
           await saveReportRecord({
             assessmentId: assessment_id,
             name: output_filename,
             format: "pdf",
-            filePath: outputPath,
+            filePath: stablePath,
             findingsCount: findingsCount ?? counts.total,
             criticalCount: counts.critical,
             highCount: counts.high,
@@ -896,8 +922,9 @@ export const reportingHandlers: Record<string, Function> = {
             lowCount: counts.low,
           });
         }
-        // Bytes are in cloud now; the temp render file has no
-        // reason to live. Best-effort cleanup.
+        // The bytes now live in cloud storage or the stable local
+        // reports dir; the temp render file has no reason to live.
+        // Best-effort cleanup.
         await executeInKali(`rm -f ${outputPath}`).catch(() => {});
         return { uploadStatus: "ok" };
       } catch (e) {
@@ -906,6 +933,12 @@ export const reportingHandlers: Record<string, Function> = {
         return { uploadStatus: "failed", uploadError: msg };
       }
     }
+
+    // Every render path below writes its temp files under /opt/pentest/output.
+    // Don't rely on the image having created it: the Dockerfile's
+    // `mkdir -p /opt/pentest/{output,...}` ran under dash, which has no brace
+    // expansion, so images built from it lack the directory entirely.
+    await executeInKali("mkdir -p /opt/pentest/output").catch(() => {});
 
     if (markdown_path || markdown_content) {
       // ── Mode 1: Render an existing markdown report to PDF ──
@@ -945,7 +978,7 @@ export const reportingHandlers: Record<string, Function> = {
             auto_completed: completion.auto_completed,
             completion,
             size_kb: parsed.size_kb,
-            message: `PDF report generated from markdown (${parsed.size_kb} KB); cloud upload: ${persisted.uploadStatus}`,
+            message: `PDF report generated from markdown (${parsed.size_kb} KB); ${hasCloudSession() ? "cloud upload" : "saved locally"}: ${persisted.uploadStatus}`,
           });
         } else {
           return JSON.stringify({ status: "error", message: parsed.error || "Failed to render PDF" });
@@ -999,7 +1032,7 @@ export const reportingHandlers: Record<string, Function> = {
           completion,
           size_kb: parsed.data.size_kb,
           findings_count: findings.length,
-          message: `PDF report generated with ${findings.length} findings (${parsed.data.size_kb} KB); cloud upload: ${persisted.uploadStatus}`,
+          message: `PDF report generated with ${findings.length} findings (${parsed.data.size_kb} KB); ${hasCloudSession() ? "cloud upload" : "saved locally"}: ${persisted.uploadStatus}`,
         });
       } else {
         return JSON.stringify({
@@ -1072,9 +1105,26 @@ export const reportingHandlers: Record<string, Function> = {
       );
     }
     if (!hasCloudSession()) {
-      throw new Error(
-        "complete_assessment requires an active cloud session — desktop must be signed in"
-      );
+      // Local (self-host) mode: there is no cloud to promote to, and the
+      // engine must not write the desktop's database (it owns its own). The
+      // findings and reports are already recorded here; the desktop copies
+      // them in and the user closes the run from the app. Say so plainly
+      // instead of failing — an error here used to send agents looking for
+      // workarounds, including patching Maestro's own database code.
+      const findings = await getFindingsForAssessment(assessment_id);
+      const reports = countReportsForAssessment(assessment_id);
+      return JSON.stringify({
+        status: "local_mode",
+        assessment_id,
+        findings_recorded: findings.length,
+        reports_recorded: reports,
+        message:
+          "Local mode: nothing to promote. This assessment's findings and reports are " +
+          "recorded in the engine, and the Maestro desktop app copies them into its own " +
+          "database. Ask the user to click 'Complete assessment' in the Maestro app to " +
+          "close the run. Do not try to change the assessment status or the desktop " +
+          "database yourself.",
+      });
     }
 
     const result = await promoteFindingsAndComplete(assessment_id, {

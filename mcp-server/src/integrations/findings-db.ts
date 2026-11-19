@@ -663,7 +663,19 @@ export async function generateReportContent(
 }
 
 /**
- * Save a report record to the shared database so it appears in the Tauri app's reports page.
+ * Number of report records saved for an assessment in the engine's database.
+ */
+export function countReportsForAssessment(assessmentId: string): number {
+  const db = getDatabase();
+  const row = db
+    .prepare(`SELECT COUNT(*) AS c FROM reports WHERE assessment_id = ?`)
+    .get(assessmentId) as { c: number } | undefined;
+  return row?.c ?? 0;
+}
+
+/**
+ * Save a report record to the engine's database. In local mode the desktop
+ * copies it into its own database (GET /api/reports/assessment/:id).
  */
 export async function saveReportRecord(params: {
   assessmentId: string;

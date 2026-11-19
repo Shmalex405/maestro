@@ -17,6 +17,7 @@ import { contextRouter } from "./routes/context";
 import { templatesRouter } from "./routes/templates";
 import { guidanceRouter } from "./routes/guidance";
 import { jiraRouter } from "./routes/jira";
+import { reportsRouter } from "./routes/reports";
 
 export function createApiRouter(): Router {
   const router = Router();
@@ -33,6 +34,7 @@ export function createApiRouter(): Router {
   router.use("/assessments", assessmentTestResultsRouter);
   router.use("/assessment-plan", assessmentPlanRouter);
   router.use("/findings", findingsRouter);
+  router.use("/reports", reportsRouter);
   router.use("/config", configRouter);
   router.use("/audit-logs", auditLogsRouter);
   router.use("/system", systemRouter);

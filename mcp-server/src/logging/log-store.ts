@@ -479,11 +479,55 @@ function runMigrations(db: Database.Database): void {
       content TEXT,
       file_path TEXT,
       created_at TEXT NOT NULL,
+      updated_at TEXT,
       findings_count INTEGER DEFAULT 0,
       critical_count INTEGER DEFAULT 0,
       high_count INTEGER DEFAULT 0,
+      medium_count INTEGER DEFAULT 0,
+      low_count INTEGER DEFAULT 0,
       exploitable_count INTEGER DEFAULT 0
     );
+  `);
+  // saveReportRecord() writes updated_at/medium_count/low_count. They were
+  // missing here and only worked while the engine wrote into the desktop's
+  // DB (whose reports table has them); on the engine's own DB the insert
+  // failed with "no such column". Add them to existing engine DBs too.
+  // (runMigrations runs before this table is created, so this lives here.)
+  for (const [column, definition] of [
+    ["updated_at", "TEXT"],
+    ["medium_count", "INTEGER DEFAULT 0"],
+    ["low_count", "INTEGER DEFAULT 0"],
+  ] as const) {
+    try {
+      db.prepare(`ALTER TABLE reports ADD COLUMN ${column} ${definition}`).run();
+    } catch {
+      // Column already exists
+    }
+  }
+
+  // Deletion log for findings. The desktop copies engine findings into its
+  // own database (local mode), so it must also learn which ones the engine
+  // deleted — `clear_findings`, DELETE /api/findings/:id, or anything added
+  // later. A trigger records every deletion regardless of the code path; a
+  // re-inserted id clears its entry. The desktop reads this through
+  // GET /api/findings/deleted and removes only those ids, so an empty or
+  // replaced engine database can never wipe the desktop's copies.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS deleted_findings (
+      id TEXT PRIMARY KEY,
+      deleted_at TEXT NOT NULL
+    );
+    CREATE TRIGGER IF NOT EXISTS trg_findings_record_delete
+      AFTER DELETE ON findings
+    BEGIN
+      INSERT OR REPLACE INTO deleted_findings (id, deleted_at)
+        VALUES (OLD.id, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+    END;
+    CREATE TRIGGER IF NOT EXISTS trg_findings_clear_delete_record
+      AFTER INSERT ON findings
+    BEGIN
+      DELETE FROM deleted_findings WHERE id = NEW.id;
+    END;
   `);
 
   // Projects table (for grouping assessments)
