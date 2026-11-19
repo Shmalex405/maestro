@@ -1760,6 +1760,8 @@ export const api = {
       failed: number;
       assessment_status: string;
       errors: unknown;
+      /** Local mode: reports copied in from the engine on completion. */
+      reports_synced?: number;
     }> =>
       invoke('complete_assessment', {
         assessmentId: id,
@@ -2056,7 +2058,7 @@ export const api = {
      *  path keeps using the local invoke for the auth side. */
     createJiraTicket: (id: string, params: Omit<CreateJiraTicketParams, 'finding_id'>): Promise<CreateJiraTicketResult> =>
       isTauri()
-        ? invoke('create_jira_ticket', { finding_id: id, ...params })
+        ? invoke('create_jira_ticket', { params: { finding_id: id, ...params } })
         : httpRequest(`/api/findings/${id}/jira`, {
             method: 'POST',
             body: JSON.stringify(params),
@@ -2070,7 +2072,7 @@ export const api = {
      *  remediation_code snippet — the UI gates the action on that. */
     createRemediationPr: (id: string, params: CreateRemediationPrParams): Promise<CreateRemediationPrResult> =>
       isTauri()
-        ? invoke('create_remediation_pr', { finding_id: id, ...params })
+        ? invoke('create_remediation_pr', { params: { finding_id: id, ...params } })
         : httpRequest(`/api/findings/${id}/remediation-pr`, {
             method: 'POST',
             body: JSON.stringify(params),
@@ -2484,6 +2486,16 @@ export const api = {
      *  attachment, suitable for a download click. The backend gates on
      *  org membership; the URL itself is what the webview/browser
      *  actually follows so it works without an auth header. */
+    /** Local mode only: raw bytes of a report PDF stored under
+     *  ~/.kali-mcp-pentest/reports (no cloud artifact store). The Rust
+     *  side refuses any file outside that directory. */
+    readLocalPdf: async (id: string): Promise<ArrayBuffer> =>
+      invoke<ArrayBuffer>('read_local_report_pdf', { id }),
+
+    /** Local mode only: copy a report PDF into Downloads; returns the path. */
+    saveLocalPdf: (id: string): Promise<string> =>
+      invoke<string>('save_local_report_pdf', { id }),
+
     artifactUrl: (
       id: string,
       disposition: 'inline' | 'attachment' = 'inline',
@@ -3660,13 +3672,13 @@ export const api = {
     /** Get agent status */
     getStatus: (agentId: string): Promise<AgentState> =>
       isTauri()
-        ? invoke('get_agent_status', { agent_id: agentId })
+        ? invoke('get_agent_status', { id: agentId })
         : httpRequest(`/api/agents/status/${agentId}`),
 
     /** Cancel a running agent */
     cancel: (agentId: string): Promise<void> =>
       isTauri()
-        ? invoke('cancel_agent', { agent_id: agentId })
+        ? invoke('cancel_agent', { id: agentId })
         : httpRequest(`/api/agents/${agentId}`, { method: 'DELETE' }),
 
     /** List all running agents */

@@ -60,7 +60,7 @@ pub async fn get_local_repo_paths() -> Result<HashMap<String, String>> {
 
 /// Set or clear the local path for a single repo. Pass `path = None` to
 /// remove the override (the UI will fall back to the cloud `default_path`).
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn set_local_repo_path(repo_id: String, path: Option<String>) -> Result<()> {
     let mut map = load()?;
     match path {

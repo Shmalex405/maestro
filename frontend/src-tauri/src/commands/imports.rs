@@ -280,7 +280,7 @@ fn parse_csv_line(line: &str) -> Vec<String> {
 // =========================================================================
 
 /// Preview CSV without importing
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn preview_csv(csv_content: String) -> Result<PreviewCsvResult> {
     info!("Previewing CSV content ({} bytes)", csv_content.len());
 
@@ -296,7 +296,7 @@ pub async fn preview_csv(csv_content: String) -> Result<PreviewCsvResult> {
 }
 
 /// Import CSV and save to database
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn import_csv(
     csv_content: String,
     name: Option<String>,
