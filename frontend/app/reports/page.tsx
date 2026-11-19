@@ -175,24 +175,57 @@ function parseTitleFromFilename(name: string): string {
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/** Inline PDF previewer — cloud-only.
+/** Inline PDF previewer.
  *
- *  Reports are stored in the per-customer S3 bucket; the desktop
- *  fetches a 15-min presigned URL from the backend and points an
- *  iframe at it. There is intentionally no local-file fallback:
- *  PDFs live in cloud storage exclusively, accessed via the
- *  application. If a row exists without bytes (legacy reports
- *  generated before cloud-only persistence shipped), the user
- *  re-generates the assessment to get a fresh cloud-backed PDF —
- *  scavenging from local disk is not part of the supported flow. */
+ *  Cloud mode: reports are stored in the per-customer S3 bucket; the
+ *  desktop fetches a 15-min presigned URL from the backend and points
+ *  an iframe at it.
+ *
+ *  Local (self-host) mode: there is no cloud store. The engine writes
+ *  PDFs under ~/.kali-mcp-pentest/reports and the row's file_path points
+ *  there, so the preview loads those bytes through a Rust command (which
+ *  refuses files outside that directory) into a blob: URL.
+ *
+ *  A row with neither (legacy reports generated before cloud-only
+ *  persistence) is shown as unavailable. */
 function PdfPreview({ report }: { report: ReportItem }) {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
   const hasArtifact = !!report.dbReport?.has_artifact;
+  const hasLocalFile =
+    !hasArtifact && !!report.dbReport?.file_path && report.dbReport?.format === 'pdf';
   const title = report.title;
   const dbId = report.dbReport?.id;
+
+  // Local mode: load the PDF bytes and preview them from a blob: URL,
+  // revoked when the panel closes.
+  useEffect(() => {
+    if (!hasLocalFile || !dbId) return;
+    let cancelled = false;
+    let objectUrl: string | null = null;
+    setLoading(true);
+    setError(null);
+    setPreviewUrl(null);
+    api.reports
+      .readLocalPdf(dbId)
+      .then((bytes) => {
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+        setPreviewUrl(objectUrl);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(typeof err === 'string' ? err : err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [dbId, hasLocalFile]);
 
   // Fetch the presigned URL once when the panel expands. 15-min TTL
   // is comfortably longer than a typical viewing session; re-expand
@@ -226,8 +259,14 @@ function PdfPreview({ report }: { report: ReportItem }) {
     if (!dbId) return;
     const { toast } = await import('sonner');
     try {
-      const filename = `${title.replace(/[/\\]/g, '_')}.pdf`;
-      const savedPath = await api.reports.downloadToDisk(dbId, 'pdf', filename, true);
+      const savedPath = hasLocalFile
+        ? await api.reports.saveLocalPdf(dbId)
+        : await api.reports.downloadToDisk(
+            dbId,
+            'pdf',
+            `${title.replace(/[/\\]/g, '_')}.pdf`,
+            true,
+          );
       toast.success(`Saved to ${savedPath}`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -235,7 +274,7 @@ function PdfPreview({ report }: { report: ReportItem }) {
     }
   };
 
-  if (hasArtifact) {
+  if (hasArtifact || hasLocalFile) {
     return (
       <div className="flex flex-col">
         <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-border">
