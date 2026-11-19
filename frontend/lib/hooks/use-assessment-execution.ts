@@ -76,10 +76,13 @@ function deriveVerdict(
   const anyAbsent = tools.some(toolAbsent);
   const anyBlocked = tests.some((t) => t.status === 'BLOCKED');
 
-  // No per-test data: lean on assessment status + tool provenance.
+  // No per-test data. Absent tools still mean blocked coverage, but a
+  // completed run with no recorded tests is NOT a clean result — it used to
+  // be reported as 'complete' ("All recorded tests passed…"), which in a
+  // security tool reads as a passing assessment when nothing was verified
+  // (e.g. an agent that ran without Maestro's tools). Report it as unknown.
   if (tests.length === 0) {
     if (anyBlocked || anyAbsent) return 'blocked';
-    if (status === 'completed') return 'complete';
     return 'unknown';
   }
 
@@ -383,7 +386,9 @@ export function useAssessmentExecution(
             ? 'Coverage blocked — absent tools or blocked tests.'
             : verdict === 'failed'
               ? assessment.error_message || 'Assessment failed.'
-              : 'Outcome could not be determined from recorded data.';
+              : tests.length === 0
+                ? 'No test results were recorded for this run, so its coverage cannot be confirmed.'
+                : 'Outcome could not be determined from recorded data.';
 
     // ---- provenance discriminator ----
     const provenance = {
